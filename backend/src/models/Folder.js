@@ -2,28 +2,41 @@ const mongoose= require('mongoose');
 
 const folderschema= new mongoose.Schema(
     {
-        title:{
+        name:{
             type:String,
             required:true,
             trim:true,
-            minlength:1
+            maxlength:50,
         },
-        user:{
+
+        workspaceID:{
+            type:mongoose.Schema.Types.ObjectId,
+            ref:"Workspace",
+            required:true,
+            index:true,
+        },
+
+        createdBy:{
             type:mongoose.Schema.Types.ObjectId,
             ref:"User",
-            required:true
+            required:true,
         },
+
         isArchived:{
             type:Boolean,
-            default:false
-        }
+            default:false,
+        },
+
     },
+    
     {
-        timestamps:true
+        timestamps:true,
     }
 );
 
 // unique folder names per user
-folderschema.index({user:1,title:1},{unique:true});
+folderschema.index({workspaceID:1,name:1},{unique:true});
 
-module.exports=mongoose.model("Folder",folderschema);
+const Folder = mongoose.model("Folder", folderSchema);
+
+export default Folder;

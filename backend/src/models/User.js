@@ -5,16 +5,37 @@ const userSchema = new mongoose.Schema(
         email:{
             type:String,
             required: true,
-            unique: true
+            unique: true,
+            index: true,
+            lowercase: true,
+            trim:true,
         },
-        password: {
+        
+        passwordHash: {
             type: String,
-            required:true
+            required:true, 
+            select: false,
+        },
+        
+        displayName:{
+            type: String,
+            required: true,
+            trim:true,
+            maxlength:50
+        },
+        
+        avatarURL:{
+            type: String, 
+            default: null
         }
+
     },
+
     {
         timestamps:true
     }
 );
 
 module.exports =  mongoose.model("User", userSchema)
+
+export default User;
