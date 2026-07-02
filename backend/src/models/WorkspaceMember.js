@@ -40,10 +40,14 @@ const workspaceMemberSchema = new mongoose.Schema(
     }
 );
 
-workspaceMemberSchema.index(
-    {workspaceID:1,userID:1},
-    {unique:true}
-);
+// getMyWorkspaces query
+WorkspaceMemberSchema.index({ userId: 1 });
+
+// countDocuments in getWorkspaceById
+WorkspaceMemberSchema.index({ workspaceId: 1 });
+
+// duplicate guard
+WorkspaceMemberSchema.index({ workspaceId: 1, userId: 1 }, { unique: true });
 
 const WorkspaceMember = mongoose.model(
     "WorkspaceMember", workspaceMemberSchema

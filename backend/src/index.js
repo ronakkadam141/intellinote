@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose=require('mongoose');
 const cors = require("cors");
 const dotenv = require('dotenv');
+const errorHandler = require("./middleware/errorHandler");
 
 dotenv.config();
 
@@ -21,7 +22,10 @@ app.get("/", (req, res) => {
 app.use("/auth", require("./routes/auth"));
 app.use("/notes", require("./routes/notes"));
 app.use("/ai", require("./routes/ai"));
-app.use("/folder",require("./routes/folder"));
+app.use("/folder",require("./routes/folders"));
+
+// error handler 
+app.use(errorHandler);
 
 // mongodb connection 
 mongoose.connect(process.env.MONGO_URI)
@@ -34,7 +38,13 @@ app.listen(PORT, () => {
   console.log("Server running on 5000");
 });
 
+const memberRoutes = require('./routes/member');
 
+app.use('/api/workspaces/:workspaceId/member',memberRoutes);
+
+
+const folderRoutes = require('./routes/folders');
+app.use('/api/workspaces/:workspaceId/folders', folderRoutes);
 /*
 Folder info    
 "title": "First Folder",

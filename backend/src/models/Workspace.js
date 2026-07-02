@@ -45,6 +45,8 @@ const workspaceSchema=new mongoose.Schema(
     }
 )
 
+WorkspaceSchema.index({ slug: 1 }, { unique: true });   // slug uniqueness
+WorkspaceSchema.index({ ownerId: 1 });                  // future: "workspaces I own" queries
 const Workspace = mongoose.model("Workspace", workspaceSchema);
 
 export default Workspace;
