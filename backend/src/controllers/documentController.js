@@ -24,6 +24,7 @@ const EMPTY_DOCUMENT_CONTENT = {
  * if folderId given, we validate it to workspace and if not archived assign it 
  * 
 */
+
 const createDocument= async(req,res,next)=>{
     try{
         const {workspaceId} = req.params;
@@ -349,6 +350,113 @@ const updateDocument= async(req,res,next)=>{
     }
 };
 
+/*
+ Adds and/or removes tags using atomic MongoDB operators:
+ *   $addToSet — adds tags that don't already exist (no duplicates)
+ *   $pull     — removes specified tags
+
+ * Both operations can be sent in a single request.
+ * Adapted from the old NotesController.updateTags — the cleanest method
+ * in the original codebase. Tag validation happens before any DB call.
+
+
+ * Why a separate endpoint instead of PATCH /documents/:id?
+ * Because tag updates have additive/subtractive semantics that can't be
+ * expressed as simple field replacement. Merging them into updateDocument
+ * would require complex logic to distinguish "replace tags" from "add tags".
+*/
+const updateDocumentTags = async(req,res,next)=>{
+    try{
+        const {workspaceId, documentId }=req.params;
+        const {add=[],remove=[]}=req.body;
+
+        if(!mongoose.Types.ObjectId.isValid(documentId)){
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_ID',
+                    message: 'Invalid document ID format.',
+                },
+            });
+        }
+
+        if(!Array.isArray(add)){
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_INPUT', message: '`add` must be an array.' },
+            });
+        }
+
+        if(!Array.isArray(remove)){
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_INPUT', message: '`remove` must be an array.' },
+            });
+        }
+
+        if(add.some((tag) => typeof tag !== 'string' || !tag.trim())){
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_INPUT', message: 'All tags in `add` must be non-empty strings.' },
+            });
+        }
+
+        if(remove.some((tag) => typeof tag !== 'string')){
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_INPUT', message: 'All tags in `remove` must be non-empty strings.' },
+            });
+        }
+        
+        if(add.length === 0 && remove.length === 0){
+            return res.status(400).json({
+                success: false,
+                error: { code: 'NO_CHANGES', message: 'No tags to add or remove.' },
+            });
+        }
+
+        const update= {};
+
+        if(add.length > 0){
+            update.$addToSet = {tags : {$each: add.map((t)=> t.trim)}};
+        }
+        if(remove.length >0){
+            update.$pull = {tags:{$in : remove}};
+        }
+
+        const document= await Document.findOneAndUpdate(
+            {_id:documentId,workspaceId,isArchived:false},
+            update,
+            {new:true},
+        )   .select('tags updatedAt');
+
+        if(!document){
+            return res.status(404).json({
+                success: false,
+                error: {
+                code: 'DOCUMENT_NOT_FOUND',
+                message: 'Document not found.',
+                },
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                document: {
+                    id: document._id,
+                    tags: document.tags,
+                    updatedAt: document.updatedAt,
+                },
+            },
+        });
+
+    }
+    catch(err){
+        return next(err);
+    }
+}
+
 /**
     ARCHIVE DOCUMENT
  * soft delete document by isarchived:true
@@ -402,105 +510,6 @@ const archiveDocument= async(req,res,next)=>{
     }
 }
 
-const assignFolder=async(req,res)=>{
-    try{
-        const DocumentID=req.params.id;
-        const {folderId}=req.body;
-        
-        const Document= await Document.findOne({
-            _id:DocumentID,
-            user:req.userID
-        });
-
-        if(!Document){
-            return res.status(404).json({message:"Document not found"});
-        }
-
-        if(folderId === null){
-            Document.folder=null;
-        }
-        else{
-            const folder= await Folder.findOne({
-                _id:folderId,
-                user:req.userID,
-                isArchived:false
-            });
-
-            if(!folder){
-                return res.status(400).json({message:"Invalid folder"});
-            }
-
-            Document.folder=folderId;
-        }
-
-        await Document.save();
-        res.status(200).json(Document);
-    }
-    catch{
-        res.status(500).json({message:"Failed to assign folder"});
-    }
-};
-
-const updateTags = async(req,res)=>{
-    try{
-        const DocumentID=req.params.id;
-        const {add=[],remove=[]}=req.body;
-
-        // 🔒 STRICT VALIDATION (BEFORE ANY DB LOGIC)
-
-        if (add !== undefined && !Array.isArray(add)) {
-            return res.status(400).json({ message: "`add` must be an array" });
-        }
-
-        if (remove !== undefined && !Array.isArray(remove)) {
-            return res.status(400).json({ message: "`remove` must be an array" });
-        }
-
-        if (Array.isArray(add) && add.some(tag => typeof tag !== "string")) {
-            return res.status(400).json({ message: "All tags in `add` must be strings" });
-        }
-
-        if (Array.isArray(remove) && remove.some(tag => typeof tag !== "string")) {
-            return res.status(400).json({ message: "All tags in `remove` must be strings" });
-        }
-
-        // Build update object
-        const update={};
-
-        if (add.length > 0) {
-            update.$addToSet = {
-                tags: { $each: add }
-            };
-        }
-
-        if (remove.length > 0) {
-            update.$pull = {
-                tags: { $in: remove }
-            };
-        }
-
-        // If nothing to update
-        if (Object.keys(update).length === 0) {
-            return res.status(400).json({ message: "No tags to update" });
-        }
-
-        const Document = await Document.findOneAndUpdate(
-            { _id: DocumentID, user: req.userID },
-            update,
-            { new: true }
-        );
-
-        if(!Document){
-            return res.status(404).json({message:"Document not found"});
-        }
-
-        res.status(200).json(Document);
-    }
-    catch(error){
-        console.log(error)
-        res.status(500).json({message:"Failed to update tags"});
-    }
-}
 
 const getDocumentsByFolder= async(req,res)=>{
     try{
@@ -545,10 +554,8 @@ const getDocumentsByTag = async(req,res)=>{
 module.exports={
     createDocument,
     getDocuments,
+    getDocumentById,
     updateDocument,
-    deleteDocument,
-    assignFolder,
-    updateTags,
-    getDocumentsByFolder,
-    getDocumentsByTag
+    updateDocumentTags,
+    archiveDocument
 };

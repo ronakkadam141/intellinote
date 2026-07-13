@@ -1,22 +1,27 @@
 const express= require('express');
-const router = express.Router();
-const {protect}= require('../middleware/auth')
-const {createNote,getNotes,updateNote,deleteNote,getNotesByFolder,getNotesByTag, assignFolder, updateTags}=require("../controllers/documentController");
+const router = express.Router({mergeParams:true});
 
-router.use(protect);
+const {
+    createDocument,
+    getDocuments,
+    getDocumentById,
+    updateDocument,
+    updateDocumentTags,
+    archiveDocument,
+}=require("../controllers/documentController");
 
-router.post("/", createNote);
-router.get("/", getNotes);
+const {authenticate} = require('../middleware/auth');
+const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
+const {requireWorkspaceRole} = require('../middleware/requireWorkspaceRole');
 
-// filtering
-router.get("/folder/:folderId", getNotesByFolder);
-router.get("/tag/:tag", getNotesByTag);
+router.use(authenticate,requireWorkspaceAccess);
 
-//  SPECIFIC routes FIRST
-router.patch("/:id/tags", updateTags);
-router.patch("/:id/folder", assignFolder);
+router.get("/", getDocuments);
+router.get("/:documentId", getDocumentById);
 
-// generic
-router.put("/:id", updateNote);
-router.delete("/:id", deleteNote);
+router.post('/',requireWorkspaceAccess('editor'),createDocument);
+router.patch("/:documentId", requireWorkspaceAccess('editor'),updateDocument);
+router.patch("/:documentId/tags", requireWorkspaceAccess('editor'),updateDocumentTags);
+router.delete("/:documentId",requireWorkspaceAccess('editor'),archiveDocument);
+
 module.exports = router;

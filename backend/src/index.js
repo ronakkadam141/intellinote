@@ -45,6 +45,11 @@ app.use('/api/workspaces/:workspaceId/member',memberRoutes);
 
 const folderRoutes = require('./routes/folders');
 app.use('/api/workspaces/:workspaceId/folders', folderRoutes);
+
+const documentRoutes= require('./routes/documents');
+app.use('/api/workspaces/:workspaceId/documents',documentRoutes);
+
+
 /*
 Folder info    
 "title": "First Folder",
