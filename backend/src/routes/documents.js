@@ -1,7 +1,7 @@
 const express= require('express');
 const router = express.Router();
 const {protect}= require('../middleware/auth')
-const {createNote,getNotes,updateNote,deleteNote,getNotesByFolder,getNotesByTag, assignFolder, updateTags}=require("../controllers/notesController");
+const {createNote,getNotes,updateNote,deleteNote,getNotesByFolder,getNotesByTag, assignFolder, updateTags}=require("../controllers/documentController");
 
 router.use(protect);
 
