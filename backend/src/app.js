@@ -1,10 +1,12 @@
 const express = require("express");
-const mongoose=require('mongoose');
 const cors = require("cors");
-const dotenv = require('dotenv');
 const errorHandler = require("./middleware/errorHandler");
 
-dotenv.config();
+const authRoutes=require('./routes/auth');
+const workspaceRoutes=require('./routes/workspace');
+const memberRoutes=require('./routes/member');
+const forlderRoutes=require('./routes/folders')
+const documentRoutes=require('./routes/documents')
 
 const app = express();
 
@@ -19,37 +21,16 @@ app.get("/", (req, res) => {
 });
 
 // Routes
-app.use("/auth", require("./routes/auth"));
-app.use("/notes", require("./routes/notes"));
-app.use("/ai", require("./routes/ai"));
-app.use("/folder",require("./routes/folders"));
+app.use("/api/auth", authRoutes);
+app.use("/api/workspaces", workspaceRoutes);
+app.use("/api/workspaces/:workspaceId/members", memberRoutes);
+app.use("/api/workspaces/:workspaceId/folders",folderRoutes);
+app.use("/api/workspaces/:workspaceId/documents",documentRoutes);
 
 // error handler 
 app.use(errorHandler);
 
-// mongodb connection 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err))
-
-// start server
-const PORT=process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log("Server running on 5000");
-});
-
-const memberRoutes = require('./routes/member');
-
-app.use('/api/workspaces/:workspaceId/member',memberRoutes);
-
-
-const folderRoutes = require('./routes/folders');
-app.use('/api/workspaces/:workspaceId/folders', folderRoutes);
-
-const documentRoutes= require('./routes/documents');
-app.use('/api/workspaces/:workspaceId/documents',documentRoutes);
-
-
+module.exports=app
 /*
 Folder info    
 "title": "First Folder",
