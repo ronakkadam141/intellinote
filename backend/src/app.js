@@ -2,12 +2,13 @@ const express = require("express");
 const cors = require("cors");
 const errorHandler = require("./middleware/errorHandler");
 
-const aiRoutes = require('./routes/ai');
 const authRoutes=require('./routes/auth');
 const documentRoutes=require('./routes/documents')
 const folderRoutes=require('./routes/folders')
 const memberRoutes=require('./routes/member');
 const workspaceRoutes=require('./routes/workspace');
+const aiRoutes = require('./routes/ai');
+const imageRoutes = require('./routes/images')
 
 const app = express();
 
@@ -28,7 +29,7 @@ app.use("/api/workspaces/:workspaceId/members", memberRoutes);
 app.use("/api/workspaces/:workspaceId/folders",folderRoutes);
 app.use("/api/workspaces/:workspaceId/documents",documentRoutes);
 app.use('/api/workspaces/:workspaceId/ai', aiRoutes);
-
+app.use('/api/workspaces/:workspaceId/images',imageRoutes);
 // error handler 
 app.use(errorHandler);
 

@@ -14,6 +14,15 @@ const ACTION_PROMPTS = {
 
 const VALID_ACTIONS= Object.keys(ACTION_PROMPTS);
 
+const IMAGE_ACTION_PROMPTS={
+    explainDiagram:() =>'Explain what this diagram shows, describing its structure and how the parts relate to each other.',
+    summarizeImage:() =>'Summarize the key information shown in this image.',
+    extractNotes:()=>'Extract the content of this image into clear, structured study notes.',
+    identifyConcepts:()=>'Identify and briefly explain the key educational concepts shown in this image.',
+}
+
+const VALID_IMAGE_ACTIONS = Object.keys(IMAGE_ACTION_PROMPTS);
+
 function getActiveProvider(){
     const providerName = process.env.AI_PROVIDER || 'gemini';
     const provider = PROVIDERS[providerName];
@@ -23,6 +32,8 @@ function getActiveProvider(){
         err.code = 'AI_PROVIDER_ERROR';
         throw err;
     }
+
+    return provider;
 }
 
 async function runTextAction({action,text,context}){
@@ -40,4 +51,24 @@ async function runTextAction({action,text,context}){
     return provider.generateText({prompt});
 }
 
-module.exports = {runTextAction, VALID_ACTIONS};
+async function runImageAction({action,imageUrl}){
+    const buildPrompt = IMAGE_ACTION_PROMPTS[action];
+
+    if(!buildPrompt){
+        const err = new Error(`Invalid action: ${action}`);
+        err.code = 'INVALID_ACTION';
+        throw err;
+    }
+
+    const provider = getActiveProvider();
+
+    if(!provider.generateFromImage){
+        const err = new Error('Active AI provider does not support image input.');
+        err.code = 'AI_PROVIDER_ERROR';
+        throw err;
+    }
+
+    return provider.generateFromImage({ prompt: buildPrompt(), imageUrl });
+
+}
+module.exports = {runTextAction, runImageAction,VALID_ACTIONS,VALID_IMAGE_ACTIONS};

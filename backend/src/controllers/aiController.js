@@ -1,4 +1,4 @@
-const {runTextAction, VALID_ACTIONS} = require('../services/aiService');
+const {runTextAction,runImageAction, VALID_ACTIONS,VALID_IMAGE_ACTIONS} = require('../services/aiService');
 
 const MAX_TEXT_LENGTH = 8000;
 
@@ -55,4 +55,45 @@ async function handleTextAction(req,res,next){
     }
 }
 
-module.exports = {handleTextAction};
+async function handleImageAction(req,res,next){
+    try{
+        const {action,imageUrl} = req.body;
+
+        if(!imageUrl || typeof imageUrl !=='string' || !imageUrl.trim()){
+            return res.status(400).json({
+                success: false,
+                error: { code: 'MISSING_IMAGE_URL', message: 'imageUrl is required.' },
+            });
+        }
+
+        if(!VALID_IMAGE_ACTIONS.includes(action)){
+            return res.status(400).json({
+                success: false,
+                error: {
+                code: 'INVALID_ACTION',
+                message: `Action must be one of: ${VALID_IMAGE_ACTIONS.join(', ')}`,
+                },
+            });
+        }
+
+        const result = await runImageAction({action,imageUrl});
+
+        return res.status(200).json({
+            success: true,
+            data: { action, result },
+        });
+    }
+    catch(err){
+        if (err.code === 'AI_PROVIDER_ERROR') {
+            return res.status(502).json({
+                success: false,
+                error: {
+                    code: 'AI_PROVIDER_ERROR',
+                    message: 'The AI provider request failed. Please try again shortly.',
+                },
+            });
+        }
+        return next(err);
+    }
+}
+module.exports = {handleTextAction, handleImageAction};
