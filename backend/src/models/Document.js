@@ -6,38 +6,38 @@ const documentSchema= new mongoose.Schema(
             type:String,
             required: true,
             trim:true,
-            maxlength:50,
-            default:"untitled",
+            maxlength:200,
+            default:'Untitled',
         },
 
         content:{
-            type:Object,
-            default:{},
+            type:mongoose.Schema.Types.Mixed,
+            default:()=>({type:'doc',content:[]}),
         },
 
-        workspaceID:{
+        workspaceId:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"Workspace",
+            ref:'Workspace',
             required:true,
             index:true,
         },
 
-        folderID:{
+        folderId:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"Folder",
+            ref:'Folder',
             index:true,
             default:null,
         },
 
         createdBy:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"User",
+            ref:'User',
             required:true,
         },
 
         lastEditedBy:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"User",
+            ref:'User',
             required:true,
         },
 
@@ -59,8 +59,8 @@ const documentSchema= new mongoose.Schema(
         yjsState:{
             type:Buffer,
             default:null,
+            select:false,
         },
-
     },
 
     {
@@ -69,10 +69,11 @@ const documentSchema= new mongoose.Schema(
 );
 
 // filtering indexes
-documentSchema.index({workspaceID:1,updatedAt:-1});
-documentSchema.index({workspaceID:1,folderID:1});
-documentSchema.index({tags:1});
+documentSchema.index({workspaceId:1,isArchived:1});
+documentSchema.index({workspaceId:1,folderId:1});
+documentSchema.index({workspaceId:1,tags:1});
+documentSchema.index({workspaceId:1,isPinned:-1,updatedAt:-1});
 
-const Document = mongoose.model("Document", documentSchema);
+const Document = mongoose.model('Document', documentSchema);
 
-export default Document;
+module.exports = Document;

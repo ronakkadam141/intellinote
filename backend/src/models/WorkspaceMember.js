@@ -2,25 +2,25 @@ const mongoose= require('mongoose');
 
 const workspaceMemberSchema = new mongoose.Schema(
     {
-        workspaceID:{
+        workspaceId:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"Workspace",
+            ref:'Workspace',
             index:true,
             required:true,
         },
 
-        userID:{
+        userId:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"User",
+            ref:'User',
             index:true,
             required:true,
         },
 
         role:{
             type:String,
-            enum:["owner","editor","viewer"],
+            enum:['owner','editor','viewer'],
             required:true,
-            default:"viewer",
+            default:'viewer',
         },
 
         joinedAt:{
@@ -30,7 +30,7 @@ const workspaceMemberSchema = new mongoose.Schema(
 
         invitedBy:{
             type:mongoose.Schema.Types.ObjectId,
-            ref:"User",
+            ref:'User',
             default:null,
         },
     },
@@ -41,16 +41,16 @@ const workspaceMemberSchema = new mongoose.Schema(
 );
 
 // getMyWorkspaces query
-WorkspaceMemberSchema.index({ userId: 1 });
+workspaceMemberSchema.index({ userId: 1 });
 
 // countDocuments in getWorkspaceById
-WorkspaceMemberSchema.index({ workspaceId: 1 });
+workspaceMemberSchema.index({ workspaceId: 1 });
 
 // duplicate guard
-WorkspaceMemberSchema.index({ workspaceId: 1, userId: 1 }, { unique: true });
+workspaceMemberSchema.index({ workspaceId: 1, userId: 1 }, { unique: true });
 
 const WorkspaceMember = mongoose.model(
-    "WorkspaceMember", workspaceMemberSchema
+    'WorkspaceMember', workspaceMemberSchema
 );
 
-export default workspaceMember;
+module.exports =WorkspaceMember;

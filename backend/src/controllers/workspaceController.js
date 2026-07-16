@@ -158,7 +158,7 @@ const getWorkspaceById = async(req,res,next)=>{
             _id:workspaceId,
             isArchived:false,
         })
-            .select('name description dluf ownerId createdAt updated At')
+            .select('name description slug ownerId createdAt updatedAt')
             .lean();
 
         if(!workspace){
@@ -182,7 +182,7 @@ const getWorkspaceById = async(req,res,next)=>{
                     description:workspace.description,
                     slug:workspace.slug,
                     role:req.workspaceMember.role,
-                    membercount,
+                    memberCount,
                     createdAt:workspace.createdAt,
                     updatedAt:workspace.updatedAt,
                 },
@@ -190,8 +190,7 @@ const getWorkspaceById = async(req,res,next)=>{
         });
     }
 
-    catch(errr){
-        console.log(err);
+    catch(err){
         return next(err);
     }
     

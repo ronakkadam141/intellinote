@@ -13,15 +13,17 @@ const {
 const {authenticate} = require('../middleware/auth');
 const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
 const {requireWorkspaceRole} = require('../middleware/requireWorkspaceRole');
+const validate = require('../validators/validate');
+const {createDocumentValidator,updateDocumentValidator,updateTagsValidator}= require('../validators/documentValidators')
 
 router.use(authenticate,requireWorkspaceAccess);
 
 router.get("/", getDocuments);
 router.get("/:documentId", getDocumentById);
 
-router.post('/',requireWorkspaceAccess('editor'),createDocument);
-router.patch("/:documentId", requireWorkspaceAccess('editor'),updateDocument);
-router.patch("/:documentId/tags", requireWorkspaceAccess('editor'),updateDocumentTags);
-router.delete("/:documentId",requireWorkspaceAccess('editor'),archiveDocument);
+router.post('/',requireWorkspaceRole('editor'),createDocumentValidator,validate,createDocument);
+router.patch("/:documentId", requireWorkspaceRole('editor'),updateDocumentValidator,validate,updateDocument);
+router.patch("/:documentId/tags", requireWorkspaceRole('editor'),updateDocumentValidator,validate,updateDocumentTags);
+router.delete("/:documentId",requireWorkspaceRole('editor'),archiveDocument);
 
 module.exports = router;

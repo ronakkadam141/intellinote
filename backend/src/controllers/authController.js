@@ -1,10 +1,24 @@
 const User= require("../models/User")
 const bcrypt=require("bcrypt")
 const jwt= require ("jsonwebtoken");
-const { get } = require("mongoose");
+
+function signToken(user){
+    return jwt.sign(
+        {id:user._id,emai:user.email},
+        process.env.JWT_SECRET,
+        {expiresIn:process.env.JWT_EXPIRES_IN || '7d'}
+    );
+}
+
+const invalidCredentialsResponse = {
+    success:false,
+    error:{
+        code:'INVALID_CREDENTIALS',
+        message:'Invalid Email or password'
+    },
+}
 
 const register = async(req,res,next) =>{
-    console.log("Request body: ",req.body);
     try{
         const {email,password,displayName}=req.body;
 
@@ -21,15 +35,15 @@ const register = async(req,res,next) =>{
         }
 
 
-        const passwordhash= await bcrypt.hash(password,12);
+        const passwordHash= await bcrypt.hash(password,12);
 
         const newUser= await User.create({
-            email: email.toLoweCase().trim(),
-            passwordhash,
+            email: email.toLowerCase().trim(),
+            passwordHash,
             displayName:displayName?.trim() || null,
         });
         
-        const token = signToken(user);
+        const token = signToken(newUser);
 
         res.status(201).json({
             success:true,
@@ -78,7 +92,6 @@ const login= async(req,res,next) =>{
         });
     }
     catch(err){
-        console.log(err);
         return next(err);
     }
 };

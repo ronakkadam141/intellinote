@@ -2,7 +2,6 @@
 const mongoose=require('mongoose');
 const Document=require('../models/Document');
 const Folder=require('../models/Folder');
-const { updateSearchIndex } = require('../models/User');
 
 
 /**
@@ -12,7 +11,7 @@ const { updateSearchIndex } = require('../models/User');
  */
 
 const EMPTY_DOCUMENT_CONTENT = {
-    type = 'doc',
+    type : 'doc',
     content : [],
 };
 
@@ -59,12 +58,12 @@ const createDocument= async(req,res,next)=>{
             }
         }
         
-        const Document= await Document.create({
+        const document= await Document.create({
             title:title?.trim() || 'Untitled',
             content:EMPTY_DOCUMENT_CONTENT,
             workspaceId,
             folderId:folderId || null,
-            createdBy:req.use.id,
+            createdBy:req.user.id,
             lastEditedBy:req.user.id,
             isArchived:false,
             isPinned:false,
@@ -149,7 +148,7 @@ const getDocuments= async(req,res,next)=>{
         }
 
 
-        const documents= await Document.find({filter})
+        const documents= await Document.find(filter)
         .sort({isPinned: -1, updatedAt:-1})
         .select('-content -yjsState')
         .populate('createdBy','displayName avatarUrl')
@@ -211,7 +210,7 @@ const getDocumentById= async(req,res,next)=>{
             workspaceId,
             isArchived:false,
         })  .select('-yjsState')
-            .select('createdBy','displayName avatarUrl')
+            .populate('createdBy','displayName avatarUrl')
             .populate('lastEditedBy','displayName avatarUrl')
             .lean()
         
@@ -252,7 +251,7 @@ const getDocumentById= async(req,res,next)=>{
  */
 const updateDocument= async(req,res,next)=>{
     try{
-        const {workspaceId,documentId}=req.params.id;
+        const {workspaceId,documentId}=req.params;
         const {title,content,isPinned,folderId}=req.body;
 
         if(!mongoose.Types.ObjectId.isValid(documentId)){
@@ -266,7 +265,7 @@ const updateDocument= async(req,res,next)=>{
         }
 
         if(folderId!==undefined && folderId!== null){
-            if(!mongoose.Types.ObjectId.isValid(documentId)){
+            if(!mongoose.Types.ObjectId.isValid(folderId)){
                 return res.status(400).json({
                     success: false,
                     error: {
@@ -294,10 +293,9 @@ const updateDocument= async(req,res,next)=>{
         }
 
         const updates= {};;
-        if(title!==undefined) updateSearchIndex.title= title.trim()||'Untitled';
+        if(title!==undefined) updates.title= title.trim()||'Untitled';
         if(content!==undefined)updates.content= content;
         if(isPinned!==undefined) updates.isPinned=isPinned;
-
         if(folderId!==undefined) updates.folderId = folderId;
 
         if(Object.keys(updates).length===0){
@@ -418,7 +416,7 @@ const updateDocumentTags = async(req,res,next)=>{
         const update= {};
 
         if(add.length > 0){
-            update.$addToSet = {tags : {$each: add.map((t)=> t.trim)}};
+            update.$addToSet = {tags : {$each: add.map((t)=> t.trim())}};
         }
         if(remove.length >0){
             update.$pull = {tags:{$in : remove}};
@@ -480,7 +478,7 @@ const archiveDocument= async(req,res,next)=>{
 
         const document= await Document.findOneAndUpdate(
             {_id:documentId,workspaceId,isArchived:false},
-            {$set:updates},
+            {$set:{isArchived:true}},
             {new:true, runValidators:true},
         )   .select('_id title');
 
@@ -505,49 +503,8 @@ const archiveDocument= async(req,res,next)=>{
             },
         });
     }
-    catch(error){
-        res.status(500).json({message:"Faield to delete Document"});
-    }
-}
-
-
-const getDocumentsByFolder= async(req,res)=>{
-    try{
-        const {folderId}=req.params;
-
-        if (!mongoose.Types.ObjectId.isValid(folderId)) {
-            return res.status(400).json({ message: "Invalid folder id" });
-        }
-
-        const filter={
-            user: req.userID,
-            isArchived:false,
-            folder:folderId
-        }
-
-        const Documents= await Document.find(filter).sort({updatedAt:-1});
-
-        res.status(200).json(Documents);
-    }
-    catch(error){
-        res.status(500).json({message:"Failed to fetch Documents by folder"});
-    }
-}
-
-const getDocumentsByTag = async(req,res)=>{
-    try{
-        const {tag}=req.params;
-
-        const Documents= await Document.find({
-            user: req.userID,
-            isArchived:false,
-            tags:tag
-        }).sort({updatedAt:-1});
-        res.status(200).json(Documents);
-    }
-
-    catch(error){
-        res.status(500).json({message:"Failed to fetch Documents by Tag"});
+    catch(err){
+        return next(err)
     }
 }
 

@@ -19,13 +19,13 @@ const userSchema = new mongoose.Schema(
         
         displayName:{
             type: String,
-            required: true,
+            required: false,
             trim:true,
             default:null,
-            maxlength:50
+            maxlength:60,
         },
         
-        avatarURL:{
+        avatarUrl:{
             type: String, 
             default: null,
         }
@@ -37,4 +37,4 @@ const userSchema = new mongoose.Schema(
     }
 );
 
-module.exports =  mongoose.model("User", userSchema)
+module.exports =  mongoose.model('User', userSchema)

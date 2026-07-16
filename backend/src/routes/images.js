@@ -7,6 +7,10 @@ const {authenticate} = require('../middleware/auth');
 const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
 const {requireWorkspaceRole} = require('../middleware/requireWorkspaceRole');
 
+// multer's errors (bad file type, too large) don't go through our normal
+// try/catch - this wrapper catches them and replies with the standard
+// error envelope instead of letting them fall through as raw text.
+
 function handleUpload(req,res,next){
     upload.single('image')(req,res,(err)=>{
         if(err){

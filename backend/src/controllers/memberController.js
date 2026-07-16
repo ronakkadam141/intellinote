@@ -1,5 +1,4 @@
 const User = require('../models/User');
-const { default: workspaceMember } = require('../models/WorkspaceMember');
 const WorkspaceMember = require('../models/WorkspaceMember');
 
 /*
@@ -163,7 +162,7 @@ const updateMemberRole = async(req,res,next)=>{
             });
         }
 
-        const targetMembership=await workspaceMember.findOne({
+        const targetMembership=await WorkspaceMember.findOne({
             _id:memberId,
             workspaceId,
         });
