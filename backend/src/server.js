@@ -1,24 +1,15 @@
-const dotenv = require('dotenv');
-dotenv.configure()
+const env=require('./config/env');
 
 const mongoose = require('mongoose')
 const app = require('./app');
 
-const PORT = process.env.port || 5000;
-const MONGO_URI = process.env.MONGO_URI;
-
 async function start(){
-    if(!MONGO_URI){
-        console.error('MONGO URI is not set. Abort')
-        process.exit(1);
-    }
-
     try{
-        await mongoose.connect(MONGO_URI);
+        await mongoose.connect(env.MONGO_URI);
         console.log('MongoDB Connected');
 
         app.listen(PORT, ()=>{
-            console.log(`Server running on port ${PORT}`);
+            console.log(`Server running on port ${env.PORT}`);
         });
     }
     catch(err){

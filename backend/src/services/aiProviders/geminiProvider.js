@@ -1,5 +1,7 @@
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const env = require('../../config/env');
+
+const GEMINI_MODEL = env.GEMINI_MODEL;
+const GEMINI_API_KEY =env.GEMINI_API_KEY;
 
 function providerError(message){
     const err =new Error(message);
