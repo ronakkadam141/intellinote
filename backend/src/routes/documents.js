@@ -14,7 +14,8 @@ const {authenticate} = require('../middleware/auth');
 const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
 const {requireWorkspaceRole} = require('../middleware/requireWorkspaceRole');
 const validate = require('../validators/validate');
-const {createDocumentValidator,updateDocumentValidator,updateTagsValidator}= require('../validators/documentValidators')
+const {createDocumentValidator,updateDocumentValidator,updateTagsValidator}= require('../validators/documentValidators');
+const { deleteDocumentImage } = require('../controllers/imageController');
 
 router.use(authenticate,requireWorkspaceAccess);
 
@@ -23,7 +24,8 @@ router.get("/:documentId", getDocumentById);
 
 router.post('/',requireWorkspaceRole('editor'),createDocumentValidator,validate,createDocument);
 router.patch("/:documentId", requireWorkspaceRole('editor'),updateDocumentValidator,validate,updateDocument);
-router.patch("/:documentId/tags", requireWorkspaceRole('editor'),updateDocumentValidator,validate,updateDocumentTags);
+router.patch("/:documentId/tags", requireWorkspaceRole('editor'),updateTagsValidator,validate,updateDocumentTags);
 router.delete("/:documentId",requireWorkspaceRole('editor'),archiveDocument);
+router.delete("/:documentId/images/:imageId",requireWorkspaceRole('editor'),deleteDocumentImageValidator,validate,deleteDocumentImage)
 
 module.exports = router;

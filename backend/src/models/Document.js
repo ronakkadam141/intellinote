@@ -55,7 +55,21 @@ const documentSchema= new mongoose.Schema(
             type:[String],
             default:[],
         },
-
+        
+        images :{
+            type:[
+                {
+                    url: { type: String, required: true },
+                    publicId: { type: String, required: true },
+                    width: Number,
+                    height: Number,
+                    format: String,
+                    uploadedAt: { type: Date, default: Date.now },                    
+                },
+            ],
+            default:[],
+        },
+        
         yjsState:{
             type:Buffer,
             default:null,

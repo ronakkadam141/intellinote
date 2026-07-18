@@ -6,7 +6,8 @@ const {uploadImage} = require('../controllers/imageController');
 const {authenticate} = require('../middleware/auth');
 const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
 const {requireWorkspaceRole} = require('../middleware/requireWorkspaceRole');
-
+const validate = require('../validators/validate');
+const {uploadImageValidator} = require('../validators/imageValidators');
 // multer's errors (bad file type, too large) don't go through our normal
 // try/catch - this wrapper catches them and replies with the standard
 // error envelope instead of letting them fall through as raw text.
@@ -29,6 +30,15 @@ function handleUpload(req,res,next){
     });
 }
 
-router.post('/',authenticate,requireWorkspaceAccess,requireWorkspaceRole('editor'),handleUpload,uploadImage);
+router.post(
+    '/',
+    authenticate,
+    requireWorkspaceAccess,
+    requireWorkspaceRole('editor'),
+    handleUpload,
+    uploadImageValidator,
+    validate,
+    uploadImage
+);
 
 module.exports=router;

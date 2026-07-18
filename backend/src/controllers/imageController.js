@@ -24,11 +24,48 @@ async function uploadImage(req,res,next){
         }
 
         const {workspaceId} = req.params;
+        const {documentId} = req.body;
 
+        if(documentId){
+            const targetExists = await Document.exists({
+                _id: documentId,
+                worksapceId,
+                isArchived : false,
+            })
+
+            if(!targetExists){
+                return res.status(404).json({
+                    success: false,
+                    error: {
+                        code: 'DOCUMENT_NOT_FOUND',
+                        message: 'Target document not found in this workspace.',
+                    },
+                });
+            }
+        }
         const result = await uploadBufferToCloudinary(
             req.file.buffer,
             `intellinote/${workspaceId}`
         )
+
+        const imagedata = {
+            url: result.secure_url,
+            publicId: result.public_id,
+            width: result.width,
+            height: result.height,
+            format: result.format,
+            uploadedAt: new Date(),
+        };
+
+        if(documentId){
+            await Document.updateOne(
+                { _id: documentId, workspaceId },
+                {
+                    $push: { images: imageData },
+                    $set: { lastEditedBy: req.user.id },
+                }
+            )
+        }
 
         return res.status(201).json({
             success: true,
@@ -47,4 +84,70 @@ async function uploadImage(req,res,next){
     }
 }
 
-module.exports = {uploadImage};
+async function deleteDocumentImage(req,res,next){
+    try{
+
+        const {workspaceId,documentId,imageId} = req.params;
+
+        const document = await Document.findOne({
+            _id: documentId,
+            worksapceId,
+            isArchived : false,
+        }); 
+        
+        if(!document){
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'DOCUMENT_NOT_FOUND',
+                    message: 'Target document not found in this workspace.',
+                },
+            });
+        }
+
+        const image = document.images.id(imageId);
+
+        if(!image){
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'IMAGE_NOT_FOUND',
+                    message: 'Image not found in this document.',
+                },
+            });
+        }
+
+        try{
+            const cloudResult = await cloudinary.uploader.destroy(image.publicId);
+            if(cloudResult.result !== 'ok' && cloudResult.result !=='not found'){
+                throw new error(`Unexpected Cloudinary response: ${cloudResult.result}`);
+            }
+        }
+        catch(cloudErr){
+            return res.status(502).json({
+                success: false,
+                error: {
+                    code: 'IMAGE_DELETE_FAILED',
+                    message: 'Could not delete the image asset. Please retry.',
+                },
+            });
+        }
+
+        await Document.updateOne(
+            { _id: documentId, workspaceId },
+            {
+                $pull: { images: { _id: imageId } },
+                $set: { lastEditedBy: req.user.id },
+            }
+        )
+
+        return res.status(200).json({
+            success: true,
+            data: { documentId, imageId },
+        });
+    }
+    catch(err){
+        return next(err);
+    }
+}
+module.exports = {uploadImage,deleteDocumentImage};

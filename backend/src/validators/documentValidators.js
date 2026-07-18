@@ -1,14 +1,14 @@
-const {body} = require('express-validators');
+const {body,param} = require('express-validators');
 
 const createDocumentValidator=[
     body('title').optional().isString().trim().isLength({max:200}),
-    body('folderId').option({nullable:true}).isMongoId().withMessage('folderId must be a valid ID or null'),
+    body('folderId').optional({nullable:true}).isMongoId().withMessage('folderId must be a valid ID or null'),
 ];
 
 const updateDocumentValidator = [
     body('title').optional().isString().trim().isLength({max:200}),
     body('isPinned').optional().isBoolean(),
-    body('folderId').option({nullable:true}).isMongoId().withMessage('folderId must be a valid ID or null'),
+    body('folderId').optional({nullable:true}).isMongoId().withMessage('folderId must be a valid ID or null'),
     body('content').optional().isObject().withMessage('content must be a ProseMissor JSON object.'),
 ];
 
@@ -19,4 +19,14 @@ const updateTagsValidator = [
     body('remove.*').optional().isString().trim().isLength({max:30}),
 ];
 
-module.exports= {createDocumentValidator,updateDocumentValidator,updateTagsValidator};
+const deleteDocumentImageValidator = [
+    param('documentId').isMongoId().withMessage('Invalid document ID.'),
+    param('imageId').isMongoId().withMessage('Invalid image ID.'),
+]
+
+module.exports= {
+    createDocumentValidator,
+    updateDocumentValidator,
+    updateTagsValidator,
+    deleteDocumentImageValidator,
+};
