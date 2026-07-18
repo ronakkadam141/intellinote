@@ -14,7 +14,7 @@ const {authenticate} = require('../middleware/auth');
 const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
 const {requireWorkspaceRole} = require('../middleware/requireWorkspaceRole');
 const validate = require('../validators/validate');
-const {createDocumentValidator,updateDocumentValidator,updateTagsValidator}= require('../validators/documentValidators');
+const {createDocumentValidator,updateDocumentValidator,updateTagsValidator,deleteDocumentImageValidator}= require('../validators/documentValidators');
 const { deleteDocumentImage } = require('../controllers/imageController');
 
 router.use(authenticate,requireWorkspaceAccess);

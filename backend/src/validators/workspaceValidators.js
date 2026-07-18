@@ -1,4 +1,4 @@
-const {body} = require('express-validators');
+const {body} = require('express-validator');
 
 const createWorkspaceValidator = [
     body('name').trim().notEmpty().withMessage('Workspace name is required').isLength({max:100}),

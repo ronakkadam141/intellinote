@@ -1,4 +1,4 @@
-const {body} = require('express-validators');
+const {body} = require('express-validator');
 
 const inviteMemberValidator = [
     body('email').isEmail().withMessage('A valid email is required').normalizeEmail(),

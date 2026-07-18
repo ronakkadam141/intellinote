@@ -11,7 +11,7 @@ const {
 
 const {authenticate}=require('../middleware/auth');
 const {requireWorkspaceAccess}= require('../middleware/requireWorkspaceAccess');
-const {requireWorkspaceRole, requireWorkspaceRole}=require('../middleware/requireWorkspaceRole');
+const {requireWorkspaceRole}=require('../middleware/requireWorkspaceRole');
 const validate = require('../validators/validate');
 const {createWorkspaceValidator,updateWorkspaceValidator}= require('../validators/workspaceValidators')
 

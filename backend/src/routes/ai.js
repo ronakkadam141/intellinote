@@ -3,7 +3,7 @@ const router = express.Router({mergeParams:true});
 
 const {handleTextAction,handleImageAction}= require('../controllers/aiController');
 const {authenticate}= require('../middleware/auth');
-const requireWorkspaceAccess = require('../middleware/requireWorkspaceAccess');
+const {requireWorkspaceAccess} = require('../middleware/requireWorkspaceAccess');
 const validate = require('../validators/validate');
 const {textActionValidators,imageActionValidators} = require('../validators/aiValidators');
 

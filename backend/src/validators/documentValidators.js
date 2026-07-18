@@ -1,4 +1,4 @@
-const {body,param} = require('express-validators');
+const {body,param} = require('express-validator');
 
 const createDocumentValidator=[
     body('title').optional().isString().trim().isLength({max:200}),

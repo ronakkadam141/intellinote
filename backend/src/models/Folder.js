@@ -13,7 +13,6 @@ const folderSchema= new mongoose.Schema(
             type:mongoose.Schema.Types.ObjectId,
             ref:'Workspace',
             required:true,
-            index:true,
         },
 
         createdBy:{

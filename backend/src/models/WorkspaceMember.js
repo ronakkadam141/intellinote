@@ -5,14 +5,12 @@ const workspaceMemberSchema = new mongoose.Schema(
         workspaceId:{
             type:mongoose.Schema.Types.ObjectId,
             ref:'Workspace',
-            index:true,
             required:true,
         },
 
         userId:{
             type:mongoose.Schema.Types.ObjectId,
             ref:'User',
-            index:true,
             required:true,
         },
 
