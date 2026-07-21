@@ -50,6 +50,8 @@ async function handleTextAction(req,res,next){
                     message: 'The AI provider request failed. Please try again shortly.',
                 },
             });
+            
+            console.log(err);
         }
         return next(err);
     }
@@ -92,6 +94,7 @@ async function handleImageAction(req,res,next){
                     message: 'The AI provider request failed. Please try again shortly.',
                 },
             });
+            console.log(err);
         }
         return next(err);
     }

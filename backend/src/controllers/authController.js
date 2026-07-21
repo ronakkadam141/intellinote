@@ -4,7 +4,7 @@ const jwt= require ("jsonwebtoken");
 const env = require('../config/env')
 function signToken(user){
     return jwt.sign(
-        {id:user._id,emai:user.email},
+        {id:user._id,email:user.email},
         env.JWT_SECRET,
         {expiresIn:env.JWT_EXPIRES_IN || '7d'}
     );
@@ -71,10 +71,10 @@ const login= async(req,res,next) =>{
             email:email.toLowerCase().trim(),
         }).select('+passwordHash');
 
-        if(!user) return res.status(400).json(invalidCredentialsResponse);
+        if(!user) return res.status(401).json(invalidCredentialsResponse);
         
         const isMatch= await bcrypt.compare(password,user.passwordHash);
-        if(!isMatch) return res.status(400).json(invalidCredentialsResponse);
+        if(!isMatch) return res.status(401).json(invalidCredentialsResponse);
 
         const token = signToken(user);
 

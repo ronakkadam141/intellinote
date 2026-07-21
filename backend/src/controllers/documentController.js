@@ -270,27 +270,29 @@ const updateDocument= async(req,res,next)=>{
                     success: false,
                     error: {
                     code: 'INVALID_ID',
-                    message: 'Invalid document ID format.',
+                    message: 'Invalid folder ID format.',
+                    },
+                });
+            }
+
+            const folder = await Folder.findOne({
+                _id:folderId,
+                workspaceId,
+                isArchived:false,
+            }).lean();
+
+            if(!folder){
+                return res.status(404).json({
+                    success: false,
+                    error: {
+                        code: 'FOLDER_NOT_FOUND',
+                        message: 'Folder not found in this workspace.',
                     },
                 });
             }
         }
 
-        const folder = await Folder.findOne({
-            _id:folderId,
-            workspaceId,
-            isArchived:false,
-        }).lean();
-
-        if(!folder){
-            return res.status(404).json({
-                success: false,
-                error: {
-                    code: 'FOLDER_NOT_FOUND',
-                    message: 'Folder not found in this workspace.',
-                },
-            });
-        }
+        
 
         const updates= {};;
         if(title!==undefined) updates.title= title.trim()||'Untitled';

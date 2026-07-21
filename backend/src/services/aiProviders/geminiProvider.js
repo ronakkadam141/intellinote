@@ -4,6 +4,7 @@ const GEMINI_MODEL = env.GEMINI_MODEL;
 const GEMINI_API_KEY =env.GEMINI_API_KEY;
 
 function providerError(message){
+    console.error('[Gemini Provider Error]', message);
     const err =new Error(message);
     err.code ='AI_PROVIDER_ERROR';
     return err;
@@ -19,8 +20,8 @@ async function generateText({prompt}){
     const response = await fetch(url,{
         method:'POST',
         headers:{'Content-type': 'application/json'},
-        body:JSON/stringify({
-            contents:[{parts :[{text:prompts}]}],
+        body:JSON.stringify({
+            contents:[{parts :[{text:prompt}]}],
         }),
     });
 
@@ -71,6 +72,7 @@ async function generateFromImage({prompt, imageUrl}){
     });
 
     if(!response.ok){
+
         throw providerError(`Gemini API error ; ${response.status}`);
     }
 

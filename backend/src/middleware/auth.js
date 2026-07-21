@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-
+const env = require("../config/env");
 /*
     Verifies JWT and attaches req.user = { id, email } to the request.
     All protected routes must run this middleware first.
@@ -18,7 +18,7 @@ const authenticate = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, env.JWT_SECRET);
 
     // Attach structured user object — extendable without breaking changes
     req.user = {
@@ -29,7 +29,8 @@ const authenticate = async (req, res, next) => {
     return next();
   } catch (err) {
     const isExpired = err.name === 'TokenExpiredError';
-
+    
+    console.log(err);
     return res.status(401).json({
       success: false,
       error: {

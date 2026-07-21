@@ -1,5 +1,6 @@
 const cloudinary = require('../config/cloudinary');
 const upload = require('../middleware/upload');
+const Document = require('../models/Document');
 
 function uploadBufferToCloudinary(buffer,folder){
     return new Promise((resolve,reject)=>{
@@ -29,7 +30,7 @@ async function uploadImage(req,res,next){
         if(documentId){
             const targetExists = await Document.exists({
                 _id: documentId,
-                worksapceId,
+                workspaceId,
                 isArchived : false,
             })
 
@@ -48,7 +49,7 @@ async function uploadImage(req,res,next){
             `intellinote/${workspaceId}`
         )
 
-        const imagedata = {
+        const imageData = {
             url: result.secure_url,
             publicId: result.public_id,
             width: result.width,
@@ -70,11 +71,14 @@ async function uploadImage(req,res,next){
         return res.status(201).json({
             success: true,
             data: {
-                imageUrl: result.secure_url,
-                publicId: result.public_id,
-                width: result.width,
-                height: result.height,
-                format: result.format,
+                imageUrl: imageData.url,
+                publicId: imageData.publicId,
+                width: imageData.width,
+                height: imageData.height,
+                format: imageData.format,
+                documentId: documentId || null,
+                updatedAt: imageData.uploadedAt,
+                lastEditedBy: documentId ? req.user.id : null,
             },
         });
     }
@@ -91,7 +95,7 @@ async function deleteDocumentImage(req,res,next){
 
         const document = await Document.findOne({
             _id: documentId,
-            worksapceId,
+            workspaceId,
             isArchived : false,
         }); 
         
@@ -120,7 +124,7 @@ async function deleteDocumentImage(req,res,next){
         try{
             const cloudResult = await cloudinary.uploader.destroy(image.publicId);
             if(cloudResult.result !== 'ok' && cloudResult.result !=='not found'){
-                throw new error(`Unexpected Cloudinary response: ${cloudResult.result}`);
+                throw new Error(`Unexpected Cloudinary response: ${cloudResult.result}`);
             }
         }
         catch(cloudErr){
