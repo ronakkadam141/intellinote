@@ -50,9 +50,10 @@ const register = async(req,res,next) =>{
             data:{
                 token,
                 newUser:{
-                    id:newUser._id,
-                    email:newUser.email,
-                    displayName: newUser.displayName,
+                    id:newuser._id,
+                    email:newuser.email,
+                    displayName: newuser.displayName,
+                    avatarUrl:newuser.avatarUrl || null,
                 }
             }
         });
@@ -82,11 +83,11 @@ const login= async(req,res,next) =>{
             success:true,
             data:{
                 token,
-                user:{
-                    id:user._id,
-                    email:user.email,
-                    displayName: user.displayName,
-                    avatarUrl:user.avatarUrl || null,
+                newUser:{
+                    id:newuser._id,
+                    email:newuser.email,
+                    displayName: newuser.displayName,
+                    avatarUrl:newuser.avatarUrl || null,
                 },
             },
         });
