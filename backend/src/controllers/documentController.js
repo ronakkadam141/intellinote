@@ -226,7 +226,22 @@ const getDocumentById= async(req,res,next)=>{
 
         return res.status(200).json({
             success: true,
-            data: { document },
+            data: {
+                document: {
+                    id: document._id,
+                    title: document.title,
+                    content: document.content,
+                    workspaceId: document.workspaceId,
+                    folderId: document.folderId,
+                    isPinned: document.isPinned,
+                    tags: document.tags,
+                    images: document.images,
+                    createdBy: document.createdBy,
+                    lastEditedBy: document.lastEditedBy,
+                    createdAt: document.createdAt,
+                    updatedAt: document.updatedAt,
+                },
+            },
         });
     }
     catch(err){

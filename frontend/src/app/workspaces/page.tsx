@@ -74,7 +74,7 @@ function WorkspaceContent(){
                 <ul>
                     {workspaces.map((ws)=>(
                         <li key = {ws.id}>
-                            {ws.name} - {ws.role}
+                            <a href={`/workspaces/${ws.id}`}>{ws.name}</a> - {ws.role}
                         </li>
                     ))}
                 </ul>
