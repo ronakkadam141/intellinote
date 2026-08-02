@@ -14,7 +14,12 @@ const folderSchema= new mongoose.Schema(
             ref:'Workspace',
             required:true,
         },
-
+        
+        parentFolderId:{
+            type:mongoose.Schema.Types.ObjectId,
+            ref:'Folder',
+            default:null,
+        },
         createdBy:{
             type:mongoose.Schema.Types.ObjectId,
             ref:'User',
@@ -34,7 +39,7 @@ const folderSchema= new mongoose.Schema(
 );
 
 // unique folder names per workspace
-folderSchema.index({workspaceId:1,name:1},{unique:true});
+folderSchema.index({workspaceId:1,parentFolderId:1,name:1},{unique:true});
 
 const Folder = mongoose.model('Folder', folderSchema);
 

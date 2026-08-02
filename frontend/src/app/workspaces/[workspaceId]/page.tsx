@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect,useState,SyntheticEvent } from "react";
-import { useParams } from "next/navigation";
+import { useEffect,useState,SyntheticEvent, act } from "react";
+import { useParams,useSearchParams } from "next/navigation";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient,ApiError } from "@/lib/apiClient";
 import type { DocumentSummary } from "@/types/document";
@@ -9,7 +9,8 @@ import type { Folder } from "@/types/folder";
 
 function WorkspaceHomeContent(){
     const {workspaceId} = useParams<{workspaceId : string}>();
-    
+    const searchParams = useSearchParams();
+    const activeFolderId = searchParams.get("folderId");
     const [folders,setFolders]= useState<Folder[]>([]);
     const [documents,setDocuments]= useState<DocumentSummary[]>([]);
     const [loading,setLoading]= useState(true)
@@ -26,7 +27,7 @@ function WorkspaceHomeContent(){
 
         Promise.all([
             apiClient.get<{folders:Folder[]}>(`/api/workspaces/${workspaceId}/folders`),
-            apiClient.get<{documents:DocumentSummary[]}>(`/api/workspaces/${workspaceId}/documents?folderId=root`),
+            apiClient.get<{documents:DocumentSummary[]}>(`/api/workspaces/${workspaceId}/documents?folderId=${activeFolderId ?? "root"}`),
         ])
         .then(([folderRes,docRes]) =>{
             if(!cancelled){
@@ -47,7 +48,7 @@ function WorkspaceHomeContent(){
             cancelled=true;
         };
 
-    },[workspaceId]);
+    },[workspaceId,activeFolderId]);
     
     async function handleCreateFolder (e: SyntheticEvent<HTMLFormElement>){
         e.preventDefault();
@@ -100,7 +101,9 @@ function WorkspaceHomeContent(){
             ):(
                 <ul>
                     {folders.map((f)=>(
-                        <li key ={f.id}> 📁 {f.name}</li>
+                        <li key ={f.id}>
+                            <a href={`/workspaces/${workspaceId}?folderId={f.id}`}>📁 {f.name}</a> 
+                        </li>
                     ))}
                 </ul>
             )}
@@ -116,7 +119,12 @@ function WorkspaceHomeContent(){
                     {creatingFolder ? "Creating..." : "Create Folder"}
                 </button>
             </form>
-
+            
+            {activeFolderId && (
+                <p>
+                    <a href={`/workspaces/${workspaceId}`}>Back To root</a>
+                </p>
+            )}
             <h2>Documents</h2>
             {documents.length === 0 ? (
                 <p>No documents at root level yet.</p>

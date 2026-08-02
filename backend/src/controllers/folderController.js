@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const Document = require('../models/Document');
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /*
 CREATE FOLDER 
 
@@ -14,11 +15,10 @@ compound index {workspaceId,name } enforces this at DB level.
 names are case sensitive compared on precheck stores as provided. 
 Notes and notes would pass precheck but collide at index, this we normalize to lowercase 
 */
-
 const createFolder= async(req ,res, next)=>{
     try{
         const {workspaceId} = req.params;
-        const {name}= req.body;
+        const {name,parentFolderId}= req.body;
 
         if(!name || !name.trim()){
             return res.status(400).json({
@@ -33,8 +33,41 @@ const createFolder= async(req ,res, next)=>{
         const trimmedName=name.trim();
         const escapedName = escapeRegex(trimmedName);
 
+        let normalizedParentId = null;
+
+        if(parentFolderId !== undefined && parentFolderId !==null){
+            if(!mongoose.Types.ObjectId.isValid(parentFolderId)){
+                return res.status(400).json({
+                    success: false,
+                    error: { 
+                        code: 'INVALID_PARENT_ID', 
+                        message: 'Invalid parent folder ID format.' 
+                    },
+                });
+            }
+
+            const parent = await Folder.findOne({
+                _id:parentFolderId,
+                workspaceId,
+                isArchived:false,
+            }).lean();
+
+            if(!parent){
+                return res.status(400).json({
+                    success: false,
+                    error: { 
+                        code: 'PARENT_NOT_FOUND', 
+                        message: 'Parent folder not found in workspace.' 
+                    },
+                });
+            }
+
+            normalizedParentId=parent._id;
+        }
+
         const existing = await Folder.findOne({
             workspaceId,
+            parentFolderId:normalizedParentId,
             name:{$regex: `^${escapedName}$`, $options: 'i'},
             isArchived:false,
         }).lean();
@@ -52,6 +85,7 @@ const createFolder= async(req ,res, next)=>{
         const folder= await Folder.create({
             name:trimmedName,
             workspaceId,
+            parentFolderId:normalizedParentId,
             createdBy:req.user.id,
             isArchived:false,
         });
@@ -63,6 +97,7 @@ const createFolder= async(req ,res, next)=>{
                     id: folder._id,
                     name: folder.name,
                     workspaceId: folder.workspaceId,
+                    parentFolderId: folder.parentFolderId,
                     createdBy: folder.createdBy,
                     createdAt: folder.createdAt,
                 },
@@ -85,20 +120,35 @@ const createFolder= async(req ,res, next)=>{
  If the frontend needs counts, add a separate aggregation endpoint post-MVP
  rather than making this query heavier for all callers.
  */
-
 const getFolders= async(req,res,next)=>{
     try{
         const {workspaceId}= req.params;
+        const {parentId} = req.query;
 
-        const folders= await Folder.find({
-            workspaceId,
-            isArchived:false,
-        }).sort({name:1});
+        const filter = {workspaceId,isArchived:false};
+
+        if(!parentId || parentId === 'root'){
+            filter.parentFolderId=null;
+        }
+        else{
+            if(!mongoose.Types.ObjectId.isValid(parentId)){
+                return res.status(400).json({
+                    success: false,
+                    error: { 
+                        code: 'INVALID_PARENT_ID', 
+                        message: 'Invalid parent folder ID format.' 
+                    },
+                });
+            }
+            filter.parentFolderId = parentId;
+        }
+        const folders= await Folder.find(filter).sort({name:1});
 
         const formatted = folders.map((f)=>({
             id: f._id,
             name:f.name,
             workspaceId:f.workspaceId,
+            parentFolderId:f.parentFolderId,
             createdAt:f.createdAt,
             updatedAt:f.updatedAt,
         }));
@@ -120,7 +170,6 @@ returns a single folder
 scoped to workspace id, thus 
 a valid folderId from diff workspace returns 404
 */
-
 const getFolderById= async(req,res,next)=>{
     try{
         const{workspaceId,folderId}= req.params;
@@ -157,6 +206,7 @@ const getFolderById= async(req,res,next)=>{
                     id: folder._id,
                     name: folder.name,
                     workspaceId: folder.workspaceId,
+                    parentFolderId:folder.parentFolderId,
                     createdBy: folder.createdBy,
                     createdAt: folder.createdAt,
                     updatedAt: folder.updatedAt,
@@ -168,6 +218,31 @@ const getFolderById= async(req,res,next)=>{
         next(err);
     }
 }
+/*
+get descendants  
+ *Helper function BFS down a folder, collecting every descendant folder ID. 
+*/
+
+const getDescendantsFolderIds = async(rootFolderId,workspaceId,session) =>{
+    const descendantIds = [];
+    let frontier = [rootFolderId];
+
+    while(frontier.length>0){
+        const children = await Folder.find({
+            workspaceId,
+            parentFolderId:{$in:frontier},
+            isArchived:false,
+        }).select('_id').session(session||null).lean();
+
+        const childIds = children.map((c)=>c._id);
+        descendantIds.push(...childIds);
+        frontier=childIds;
+    }
+
+    return descendantIds;
+}
+
+
 
 /* 
 UPDATE FOLDER
@@ -178,11 +253,10 @@ Same duplicate-name precheck as create folder applies here
 we exclude folder being renamed from uniqueness check, 
 to avoid conflict with itself 
 */
-
 const updateFolder= async(req,res,next)=>{
     try{
         const{workspaceId,folderId}= req.params;
-        const{name}=req.body;
+        const{name,parentFolderId}=req.body;
 
         if(!mongoose.Types.ObjectId.isValid(folderId)){
             return res.status(400).json({
@@ -194,7 +268,7 @@ const updateFolder= async(req,res,next)=>{
             });
         } 
 
-        if(!name || !name.trim()){
+        if(name===undefined && parentFolderId===undefined){
            return res.status(400).json({
                 success: false,
                 error: {
@@ -203,9 +277,6 @@ const updateFolder= async(req,res,next)=>{
                 },
             }); 
         }
-
-        const trimmedName= name.trim();
-        const escapedName= escapeRegex(trimmedName);
 
         const folder = await Folder.findOne({
             _id:folderId,
@@ -223,18 +294,96 @@ const updateFolder= async(req,res,next)=>{
             });
         }
 
-        if(folder.name.toLowerCase()===trimmedName.toLowerCase()){
+        let targetParentId = folder.parentFolderId;
+
+        if(parentFolderId!== undefined){
+            if(parentFolderId === null){
+                targetParentId=null;
+            }
+            else{
+                if(!mongoose.Types.ObjectId.isValid(parentFolderId)){
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                        code: 'INVALID_PARENT_ID',
+                        message: 'Invalid folder ID format.',
+                        },
+                    });
+                } 
+
+                if(parentFolderId === String(folder._id)){
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                        code: 'INVALID_MOVE',
+                        message: 'Folder cannot be moved into itself.',
+                        },
+                    });
+                }
+
+                const newParent = await Folder.findOne({
+                    _id:parentFolderId,
+                    workspaceId,
+                    isArchived:false,
+                }).lean();
+
+                if(!newParent){
+                    return res.status(404).json({
+                        success: false,
+                        error: {
+                        code: 'PARENT_FOLDER_NOT_FOUND',
+                        message: 'Parent folder not found in this worksapce.',
+                        },
+                    });
+                }
+
+                const descendantIds = await getDescendantsFolderIds(folder._id,workspaceId);
+                const descendantIdStrings = descendantIds.map((id)=>String(id));
+
+                if(descendantIdStrings.includes(String(newParent._id))){
+                    return res.status(400).json({
+                        success: false,
+                        error: {
+                        code: 'INVALID_MOVE',
+                        message: 'Folder cannot be moved into its own subFolders.',
+                        },
+                    });
+                
+                }
+
+                targetParentId = newParent._id;
+            }
+        }
+
+        const nextName = name !== undefined ? name.trim() : folder.name;
+
+        if(name !== undefined && !nextName){
             return res.status(400).json({
                 success: false,
                 error: {
-                  code: 'NAME_UNCHANGED',
-                  message: 'New Name same as current name.',
+                code: 'MISSING_NAME',
+                message: 'Folder name cannot be empty.',
                 },
             });
         }
 
+        const nameOrParentChanged = nextName.toLowerCase() !==folder.name.toLowerCase() || String(targetParentId) !== String(folder.parentFolderId);
+
+        if(!nameOrParentChanged){
+            return res.status(400).json({
+                success: false,
+                error: {
+                code: 'NO_CHANGES',
+                message: 'No changes from current name/location.',
+                },
+            });
+        }
+
+        const escapedName = escapeRegex(nextName);
+
         const conflict = await Folder.findOne({
             workspaceId,
+            parentFolderId:targetParentId,
             name: { $regex: `^${escapedName}$`, $options: 'i' },
             isArchived: false,
             _id: { $ne: folderId },
@@ -245,13 +394,13 @@ const updateFolder= async(req,res,next)=>{
                 success: false,
                 error: {
                   code: 'FOLDER_NAME_TAKEN',
-                  message: `A folder named "${trimmedName}" already exists in this workspace.`,
+                  message: `A folder named "${nextName}" already exists in this workspace.`,
                 },
             });
         }
 
-        folder.name= trimmedName;
-
+        folder.name= nextName;
+        folder.parentFolderId= targetParentId;
         await folder.save();
 
         return res.status(200).json({
@@ -261,6 +410,7 @@ const updateFolder= async(req,res,next)=>{
                     id: folder._id,
                     name: folder.name,
                     workspaceId: folder.workspaceId,
+                    parentFolderId: folder.parentFolderId,
                     updatedAt: folder.updatedAt,
                 },
             },
@@ -286,7 +436,6 @@ const updateFolder= async(req,res,next)=>{
  archive folder+unfile documents wrapped in a transaction.
  thus incomplete step doesnt occur
  */
-
 const archiveFolder = async (req,res,next)=>{
 
     const session = await mongoose.startSession();
@@ -303,31 +452,37 @@ const archiveFolder = async (req,res,next)=>{
             });
         } 
 
-        let archivedFolder; 
-        let unfiledCount;
+        let archivedFolderIds=[]; 
+        let unfiledCount=0;
+        
 
         await session.withTransaction(async()=>{
 
-            // Step 1 - archive folder
-            archivedFolder = await Folder.findOneAndUpdate(
-                {_id: folderId, workspaceId, isArchived:false},
-                {$set : {isArchived:true}},
-                {new:true,session}
-            );
+            const rootFolder = await Folder.findOne({
+                _id:folderId,
+                workspaceId,
+                isArchived:false,
+            }).session(session);
 
-            if(!archivedFolder){
-                // throw error and automatic rollback
+            if(!rootFolder){
                 const err = new Error('Folder not found');
-                err.statusCode= 404;
-                err.code= 'FOLDER_NOT_FOUND';
+                err.statusCode = 404;
+                err.code ='FOLDER_NOT_FOUND';
                 throw err;
             }
 
-            // step 2 unfile all document that belong to this folder 
+            const descendantIds = await getDescendantsFolderIds(rootFolder._id,workspaceId,session);
+            archivedFolderIds = [rootFolder._id, ...descendantIds];
+
+            await Folder.updateMany(
+                {_id:{$in:archivedFolderIds}},
+                {$set:{isArchived:true}},
+                {session}
+            )
 
             const result = await Document.updateMany(
                 {
-                    folderId,
+                    folderId : {$in:archivedFolderIds},
                     workspaceId,
                     isArchived:false,
                 },
@@ -343,6 +498,7 @@ const archiveFolder = async (req,res,next)=>{
             data: {
                 message: 'Folder archived. Documents have been moved to workspace root.',
                 folderId,
+                archivedFolderCount : archivedFolderIds.length,
                 unfiledDocuments: unfiledCount,
             },
         });
