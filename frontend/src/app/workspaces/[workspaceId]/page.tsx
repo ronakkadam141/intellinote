@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect,useState,SyntheticEvent, act } from "react";
+import { useEffect,useState,SyntheticEvent } from "react";
 import { useParams,useSearchParams } from "next/navigation";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient,ApiError } from "@/lib/apiClient";
 import type { DocumentSummary } from "@/types/document";
 import type { Folder } from "@/types/folder";
+
+interface Crumb{
+    id:string;
+    name:string;
+}
+
+interface FolderWithParent extends Folder{
+    parentFolderId:string | null;
+}
 
 function WorkspaceHomeContent(){
     const {workspaceId} = useParams<{workspaceId : string}>();
@@ -13,10 +22,10 @@ function WorkspaceHomeContent(){
     const activeFolderId = searchParams.get("folderId");
     const [folders,setFolders]= useState<Folder[]>([]);
     const [documents,setDocuments]= useState<DocumentSummary[]>([]);
+    const [breadcrumbs,setBreadcrumbs] = useState<Crumb[]>([]);
     const [loading,setLoading]= useState(true)
     const [error,setError]= useState<string | null>(null);
 
-    
     const [newFolderName,setNewFolderName]= useState("");
     const [newDocTitle,setNewDocTitle]= useState("");
     const [creatingFolder,setCreatingFolder]= useState(false);
@@ -24,15 +33,32 @@ function WorkspaceHomeContent(){
 
     useEffect(() =>{
         let cancelled=false;
+        
+        async function loadBreadcrumbs():Promise<Crumb[]>{
+            if(!activeFolderId) return [] as Crumb[];
+            const trail: Crumb[]=[];
+            let currentId: string|null = activeFolderId;
 
+            while (currentId) {
+                const response: { folder: FolderWithParent } = await apiClient.get<{ folder: FolderWithParent }>(
+                    `/api/workspaces/${workspaceId}/folders/${currentId}`
+                );
+                const folder: FolderWithParent = response.folder;
+                trail.unshift({ id: folder.id, name: folder.name });
+                currentId = folder.parentFolderId;
+            }
+            return trail;
+        }
         Promise.all([
-            apiClient.get<{folders:Folder[]}>(`/api/workspaces/${workspaceId}/folders`),
+            apiClient.get<{folders:Folder[]}>(`/api/workspaces/${workspaceId}/folders?parentId=${activeFolderId ?? "root"}`),
             apiClient.get<{documents:DocumentSummary[]}>(`/api/workspaces/${workspaceId}/documents?folderId=${activeFolderId ?? "root"}`),
+            loadBreadcrumbs(),
         ])
-        .then(([folderRes,docRes]) =>{
+        .then(([folderRes,docRes,trail]) =>{
             if(!cancelled){
                 setFolders(folderRes.folders);
                 setDocuments(docRes.documents);
+                setBreadcrumbs(trail);
             }
         })
         .catch((err)=>{
@@ -56,7 +82,7 @@ function WorkspaceHomeContent(){
         setError(null);
 
         try{
-            const {folder} = await apiClient.post<{folder:Folder}>(`/api/workspaces/${workspaceId}/folders`,{name:newFolderName});
+            const {folder} = await apiClient.post<{folder:Folder}>(`/api/workspaces/${workspaceId}/folders`,{name:newFolderName, parentFolderId: activeFolderId??null});
 
             setFolders((prev)=>[...prev,folder]);
             setNewFolderName("");
@@ -69,13 +95,14 @@ function WorkspaceHomeContent(){
         }
     }
 
+
     async function handleCreateDocument(e: SyntheticEvent<HTMLFormElement>){
         e.preventDefault();
         setCreatingDoc(true);
         setError(null);
 
         try{
-            const {document} = await apiClient.post<{document:DocumentSummary}>(`/api/workspaces/${workspaceId}/documents`,{title:newDocTitle});
+            const {document} = await apiClient.post<{document:DocumentSummary}>(`/api/workspaces/${workspaceId}/documents`,{title:newDocTitle,folderId: activeFolderId ?? null});
 
             setDocuments((prev) => [...prev,document]);
             setNewDocTitle("");
@@ -102,7 +129,7 @@ function WorkspaceHomeContent(){
                 <ul>
                     {folders.map((f)=>(
                         <li key ={f.id}>
-                            <a href={`/workspaces/${workspaceId}?folderId={f.id}`}>📁 {f.name}</a> 
+                            <a href={`/workspaces/${workspaceId}?folderId=${f.id}`}>📁 {f.name}</a> 
                         </li>
                     ))}
                 </ul>
@@ -122,7 +149,12 @@ function WorkspaceHomeContent(){
             
             {activeFolderId && (
                 <p>
-                    <a href={`/workspaces/${workspaceId}`}>Back To root</a>
+                    <a href={`/workspaces/${workspaceId}`}>Back To Root</a>
+                    {breadcrumbs.map((crumb)=>(
+                        <span key={crumb.id}>
+                            {" "}/ <a href={`/workspaces/${workspaceId}?folderId=${crumb.id}`}>{crumb.name}</a>
+                        </span>
+                    ))}
                 </p>
             )}
             <h2>Documents</h2>
