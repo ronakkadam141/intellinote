@@ -149,12 +149,20 @@ function WorkspaceHomeContent(){
             
             {activeFolderId && (
                 <p>
-                    <a href={`/workspaces/${workspaceId}`}>Back To Root</a>
-                    {breadcrumbs.map((crumb)=>(
-                        <span key={crumb.id}>
-                            {" "}/ <a href={`/workspaces/${workspaceId}?folderId=${crumb.id}`}>{crumb.name}</a>
-                        </span>
-                    ))}
+                    <a href={`/workspaces/${workspaceId}`}>Root</a>
+                    {breadcrumbs.map((crumb,index)=>{
+                        const isCurrent= index === breadcrumbs.length-1;
+                        return (                            
+                            <span key={crumb.id}>
+                                {" "}/{" "}
+                                {isCurrent? (
+                                    crumb.name
+                                ):(
+                                    <a href={`/workspaces/${workspaceId}?folderId=${crumb.id}`}>{crumb.name}</a>
+                                )}
+                            </span>
+                        );
+                    })}
                 </p>
             )}
             <h2>Documents</h2>
