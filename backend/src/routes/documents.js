@@ -8,6 +8,7 @@ const {
     updateDocument,
     updateDocumentTags,
     archiveDocument,
+    issueWsTicket,
 }=require("../controllers/documentController");
 
 const {authenticate} = require('../middleware/auth');
@@ -22,6 +23,7 @@ router.use(authenticate,requireWorkspaceAccess);
 router.get("/", getDocuments);
 router.get("/:documentId", getDocumentById);
 
+router.post("/:documentId/ws-ticket", issueWsTicket)
 router.post('/',requireWorkspaceRole('editor'),createDocumentValidator,validate,createDocument);
 router.patch("/:documentId", requireWorkspaceRole('editor'),updateDocumentValidator,validate,updateDocument);
 router.patch("/:documentId/tags", requireWorkspaceRole('editor'),updateTagsValidator,validate,updateDocumentTags);

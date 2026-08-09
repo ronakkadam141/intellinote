@@ -2,7 +2,7 @@
 const mongoose=require('mongoose');
 const Document=require('../models/Document');
 const Folder=require('../models/Folder');
-
+const {createTicket} = require('../lib/wsTicketStore')
 
 /**
  * Every new document starts with an empty document not null or empty object 
@@ -525,11 +525,70 @@ const archiveDocument= async(req,res,next)=>{
     }
 }
 
+/*
+    issue ws ticket
+
+    single use shortlived ticket that authenticates susequent websockets 
+    connection for realtime collabs on this document. called once, 
+    right before the client opens the WS conection 
+    
+    Any workspace member can req one read only enforcement for viewers inside the 
+    live sesion itself is handled by Yjs server endlpoint confirms: this user can see 
+    this workspace and this document actually exists in it
+*/
+
+const issueWsTicket = async (req, res, next) => {
+    try {
+        const { workspaceId, documentId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(documentId)) {
+            return res.status(400).json({
+                success: false,
+                error: {
+                    code: 'INVALID_ID',
+                    message: 'Invalid document ID format.',
+                },
+            });
+        }
+
+        const document = await Document.findOne({
+            _id: documentId,
+            workspaceId,
+            isArchived: false,
+        }).select('_id').lean();
+
+        if (!document) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'DOCUMENT_NOT_FOUND',
+                    message: 'Document not found.',
+                },
+            });
+        }
+
+        const ticket = createTicket({
+            userId: req.user.id,
+            workspaceId,
+            documentId,
+            role: req.workspaceMember.role,
+        });
+
+        return res.status(201).json({
+            success: true,
+            data: { ticket },
+        });
+    } catch (err) {
+        return next(err);
+    }
+};
+
 module.exports={
     createDocument,
     getDocuments,
     getDocumentById,
     updateDocument,
     updateDocumentTags,
-    archiveDocument
+    archiveDocument,
+    issueWsTicket,
 };
