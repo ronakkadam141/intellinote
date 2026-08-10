@@ -42,6 +42,12 @@ function DocumentEditorContent() {
 
     const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
 
+    // Holds the live WebsocketProvider instance so the beforeunload handler
+    // (a separate effect, fires independently of the connect effect) can
+    // reach it without being in the connect effect's closure. Written to
+    // only inside the connect effect below — never during render.
+    const providerRef = useRef<WebsocketProvider | null>(null);
+
     // Created once, synchronously, so it's available immediately for useEditor
     // below — the network connection (WebsocketProvider) is attached later,
     // asynchronously, once a ticket has been fetched. The Y.Doc itself needs
@@ -114,6 +120,7 @@ function DocumentEditorContent() {
                     // fast-follow, not implemented in this pass.
                     shouldReconnect: () => false,
                 });
+                providerRef.current = provider;
 
                 provider.on("status", ({ status }: { status: ConnectionStatus }) => {
                     if (!cancelled) setConnectionStatus(status);
@@ -134,8 +141,24 @@ function DocumentEditorContent() {
         return () => {
             cancelled = true;
             provider?.destroy();
+            providerRef.current = null;
         };
     }, [workspaceId, documentId, ydoc]);
+
+    // Best-effort nudge before the tab closes/refreshes. Does not guarantee
+    // delivery on an abrupt (code 1006) teardown — see CURRENT_STATE.md risk
+    // log for the real fix (sendBeacon + zero-debounce persistence), planned
+    // post-editor-stability, not implemented here.
+    useEffect(() => {
+        function handleBeforeUnload() {
+            const p = providerRef.current;
+            if (p && p.ws && p.ws.readyState === WebSocket.OPEN) {
+                p.awareness.setLocalState(p.awareness.getLocalState());
+            }
+        }
+        window.addEventListener("beforeunload", handleBeforeUnload);
+        return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    }, []);
 
     const saveTitle = useCallback(
         async (value: string) => {

@@ -34,16 +34,16 @@ async function persistRoom(documentId, room) {
     }
 }
 
-function schedulePersist(documentId, room) {
-    console.log('[yjsServer] schedulePersist called, timer exists:', !!room.persistTimer);
+const SOLO_PERSIST_DEBOUNCE_MS = 300;
+
+function schedulePersist(documentId, room, delayMs = PERSIST_DEBOUNCE_MS) {
     if (room.persistTimer) clearTimeout(room.persistTimer);
     room.persistTimer = setTimeout(() => {
-        console.log('[yjsServer] persist timer FIRING, calling persistRoom now');
         room.persistTimer = null;
         persistRoom(documentId, room).catch((err) =>
             console.error(`[yjsServer] persistRoom rejected for ${documentId}:`, err),
         );
-    }, PERSIST_DEBOUNCE_MS);
+    }, delayMs);
 }
 
 const rooms = new Map(); // documentId -> ready Room object
@@ -79,7 +79,6 @@ async function getOrCreateRoom(documentId) {
         }
 
         ydoc.on('update', (update, origin) => {
-                console.log('[yjsServer] ydoc update event, origin:', origin, 'byteLength:', update.length);
             const encoder = encoding.createEncoder();
             encoding.writeVarUint(encoder, messageSync);
             syncProtocol.writeUpdate(encoder, update);
@@ -91,7 +90,12 @@ async function getOrCreateRoom(documentId) {
                 }
             });
 
-            schedulePersist(documentId, room);
+            // Solo editor is the highest-risk case for a refresh losing the
+            // last edit — persist almost immediately instead of waiting the
+            // full debounce. With 2+ collaborators, stick to the longer
+            // debounce to avoid a write storm.
+            const delay = room.conns.size <= 1 ? SOLO_PERSIST_DEBOUNCE_MS : PERSIST_DEBOUNCE_MS;
+            schedulePersist(documentId, room, delay);
         });
 
         rooms.set(documentId, room);
