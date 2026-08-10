@@ -171,7 +171,9 @@ function WorkspaceHomeContent(){
             ) : (
                 <ul>
                     {documents.map((d)=>(
-                        <li key={d.id}> 📄 {d.title} {d.isPinned && "📌"}</li>
+                        <li key={d.id}>
+                            <a href={`/workspaces/${workspaceId}/documents/${d.id}`}>📄 {d.title}</a> {d.isPinned && "📌"}
+                        </li>
                     ))}
                 </ul>
             )}

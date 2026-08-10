@@ -1,15 +1,19 @@
+const http = require('http');
 const app = require('./app');
 const mongoose = require('mongoose');
 
-const env=require('./config/env');
-
+const env = require('./config/env');
+const { initYjsServer } = require('./lib/yjsServer');
 
 async function start(){
     try{
         await mongoose.connect(env.MONGO_URI);
         console.log('MongoDB Connected');
 
-        app.listen(env.PORT, ()=>{
+        const server = http.createServer(app);
+        initYjsServer(server);
+
+        server.listen(env.PORT, ()=>{
             console.log(`Server running on port ${env.PORT}`);
         });
     }

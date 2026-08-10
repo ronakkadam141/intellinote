@@ -74,6 +74,11 @@ const documentSchema= new mongoose.Schema(
             default:null,
             select:false,
         },
+
+        contentJSON:{
+            type:mongoose.Schema.Types.Mixed,
+            default:null,
+        },
     },
 
     {
