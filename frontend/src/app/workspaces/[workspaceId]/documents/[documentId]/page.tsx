@@ -10,8 +10,6 @@ import { WebsocketProvider } from "y-websocket";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
 
-// Minimal local shape of what getDocumentById returns — if a fuller
-// Document type already exists in types/document.ts, swap this out for it.
 interface DocumentDetail {
     id: string;
     title: string;
@@ -19,12 +17,10 @@ interface DocumentDetail {
     folderId: string | null;
 }
 
-// MUST match YJS_FIELD_NAME in backend/src/lib/yjsServer.js exactly, and
-// is also Tiptap's own default — kept explicit here so the two stay in sync
-// on purpose, not by coincidence.
 const YJS_FIELD_NAME = "default";
-
 const TITLE_AUTOSAVE_DELAY_MS = 1500;
+const SYNC_TIMEOUT_MS = 2500;
+const MAX_CONNECT_ATTEMPTS = 4;
 
 type TitleStatus = "idle" | "saving" | "saved" | "error";
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -42,22 +38,22 @@ function DocumentEditorContent() {
 
     const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
 
-    // Holds the live WebsocketProvider instance so the beforeunload handler
-    // (a separate effect, fires independently of the connect effect) can
-    // reach it without being in the connect effect's closure. Written to
-    // only inside the connect effect below — never during render.
     const providerRef = useRef<WebsocketProvider | null>(null);
 
-    // Created once, synchronously, so it's available immediately for useEditor
-    // below — the network connection (WebsocketProvider) is attached later,
-    // asynchronously, once a ticket has been fetched. The Y.Doc itself needs
-    // no network to exist.
     const [ydoc] = useState(() => new Y.Doc());
 
+    useEffect(() => {
+        const logUpdate = (update: Uint8Array, origin: unknown) => {
+            console.log('[DEBUG] ydoc update — byteLength:', update.length, 'origin:', origin, 'ydoc content now:', ydoc.getXmlFragment(YJS_FIELD_NAME).toString());
+        };
+        ydoc.on('update', logUpdate);
+        return () => { ydoc.off('update', logUpdate); };
+    }, [ydoc]);
+
     const editor = useEditor({
-        immediatelyRender: false, // required for Next.js SSR — see project notes
+        immediatelyRender: false,
         extensions: [
-            StarterKit.configure({ undoRedo: false }), // Collaboration brings its own history
+            StarterKit.configure({ undoRedo: false }),
             Collaboration.configure({ document: ydoc, field: YJS_FIELD_NAME }),
         ],
         editorProps: {
@@ -67,9 +63,12 @@ function DocumentEditorContent() {
         },
     });
 
-    // Load document metadata (title, folderId) via the normal REST endpoint.
-    // This is NOT where editor content comes from — that arrives via the Yjs
-    // sync below. This is only for the title field and the "back" link.
+    useEffect(() => {
+        if (editor) {
+            console.log('[DEBUG] editor ready, current text:', editor.getText());
+        }
+    }, [editor]);
+
     useEffect(() => {
         let cancelled = false;
 
@@ -95,39 +94,86 @@ function DocumentEditorContent() {
     }, [workspaceId, documentId]);
 
     // Fetch a ws-ticket, then connect the Yjs WebSocket provider to the
-    // already-existing ydoc. Cleaned up on unmount or if the params change.
+    // already-existing ydoc. If sync doesn't complete within SYNC_TIMEOUT_MS,
+    // the connection is presumed stuck (a known race in the underlying
+    // library when a fresh connection follows a very recent one for the
+    // same document) — kill it and retry with a brand new ticket rather
+    // than leaving the user staring at a blank editor.
     useEffect(() => {
         let cancelled = false;
         let provider: WebsocketProvider | null = null;
+        let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 
         async function connect() {
             try {
+                const retryKey = `yjs-sync-retry:${documentId}`;
+                const retryAttempts = Number(sessionStorage.getItem(retryKey) ?? "0");
+                if (retryAttempts >= MAX_CONNECT_ATTEMPTS) {
+                    sessionStorage.removeItem(retryKey);
+                    setError("Couldn't establish a live session after several attempts. Please refresh manually.");
+                    setConnectionStatus("disconnected");
+                    return;
+                }
+
                 const { ticket } = await apiClient.post<{ ticket: string }>(
                     `/api/workspaces/${workspaceId}/documents/${documentId}/ws-ticket`,
                 );
                 if (cancelled) return;
 
                 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
-                const wsBase = apiUrl.replace(/^http/, "ws"); // http->ws, https->wss
+                const wsBase = apiUrl.replace(/^http/, "ws");
 
-                provider = new WebsocketProvider(`${wsBase}/ws`, documentId, ydoc, {
+                const p = new WebsocketProvider(`${wsBase}/ws`, documentId, ydoc, {
                     params: { ticket },
-                    // Our ticket is single-use, so a dropped connection can never
-                    // be recovered by blindly retrying with the same one — that
-                    // was causing an infinite failed-reconnect loop. Disable
-                    // auto-reconnect entirely for now and surface a clear message
-                    // instead; fetching a fresh ticket on reconnect is a real
-                    // fast-follow, not implemented in this pass.
+                    connect: true,
+                    resyncInterval: -1,
                     shouldReconnect: () => false,
                 });
-                providerRef.current = provider;
 
-                provider.on("status", ({ status }: { status: ConnectionStatus }) => {
+                if (cancelled) {
+                    p.destroy();
+                    return;
+                }
+
+                provider = p;
+                providerRef.current = p;
+
+                p.on("status", ({ status }: { status: ConnectionStatus }) => {
                     if (!cancelled) setConnectionStatus(status);
                 });
 
-                provider.on("closed", () => {
+                p.on("closed", () => {
                     if (!cancelled) setConnectionStatus("disconnected");
+                });
+
+                // A stuck handshake here means the client's Y.Doc state is
+                // confused — retrying in-place with the same doc doesn't help,
+                // it needs a completely fresh Y.Doc, which only a real reload
+                // gives us. Capped via sessionStorage (survives the reload,
+                // unlike any in-memory counter) so a genuinely broken
+                // connection surfaces as an error instead of reloading forever.
+                syncTimeout = setTimeout(() => {
+                    if (cancelled) return;
+                    const nextAttempts = retryAttempts + 1;
+                    if (nextAttempts >= MAX_CONNECT_ATTEMPTS) {
+                        sessionStorage.removeItem(retryKey);
+                        setError("Couldn't establish a live session after several attempts. Please refresh manually.");
+                        setConnectionStatus("disconnected");
+                        return;
+                    }
+                    sessionStorage.setItem(retryKey, String(nextAttempts));
+                    console.warn(`[sync] stuck — reloading (attempt ${nextAttempts}/${MAX_CONNECT_ATTEMPTS})`);
+                    window.location.reload();
+                }, 4000);
+
+                p.on("sync", (isSynced: boolean) => {
+                    if (isSynced) {
+                        sessionStorage.removeItem(retryKey);
+                        if (syncTimeout) {
+                            clearTimeout(syncTimeout);
+                            syncTimeout = null;
+                        }
+                    }
                 });
             } catch (err) {
                 if (!cancelled) {
@@ -140,15 +186,11 @@ function DocumentEditorContent() {
 
         return () => {
             cancelled = true;
+            if (syncTimeout) clearTimeout(syncTimeout);
             provider?.destroy();
             providerRef.current = null;
         };
     }, [workspaceId, documentId, ydoc]);
-
-    // Best-effort nudge before the tab closes/refreshes. Does not guarantee
-    // delivery on an abrupt (code 1006) teardown — see CURRENT_STATE.md risk
-    // log for the real fix (sendBeacon + zero-debounce persistence), planned
-    // post-editor-stability, not implemented here.
     useEffect(() => {
         function handleBeforeUnload() {
             const p = providerRef.current;
@@ -189,7 +231,6 @@ function DocumentEditorContent() {
         saveTitle(title);
     }
 
-    // Clear any pending debounce on unmount so it doesn't fire after leaving.
     useEffect(() => {
         return () => {
             if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);

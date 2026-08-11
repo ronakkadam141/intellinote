@@ -5,8 +5,10 @@ const awarenessProtocol = require('y-protocols/awareness');
 const encoding = require('lib0/encoding');
 const decoding = require('lib0/decoding');
 const { parse: parseUrl } = require('url');
-const { yDocToProsemirrorJSON } = require('y-prosemirror');
-
+const { yDocToProsemirrorJSON, prosemirrorJSONToYDoc } = require('y-prosemirror');
+// You need the same ProseMirror schema your editor/client uses to build contentJSON.
+// Point this at wherever that schema is defined/exported in your project.
+const { schema } = require('../prosemirror/schema');
 const Document = require('../models/Document');
 const { consumeTicket } = require('./wsTicketStore');
 
@@ -16,7 +18,35 @@ const messageAwareness = 1;
 const YJS_FIELD_NAME = 'default';
 
 const PERSIST_DEBOUNCE_MS = 3000;
+const HEARTBEAT_INTERVAL_MS = 15000; // must be well under y-websocket client's
+// default 30s "no message received" watchdog — native ws ping/pong frames are
+// invisible to browser JS and won't satisfy that check on their own, so this
+// also resends syncStep1 as a real protocol message the client's onmessage
+// handler will see and use to refresh its own timer.
 
+function startHeartbeat(wss) {
+    const interval = setInterval(() => {
+        wss.clients.forEach((ws) => {
+            if (ws.isAlive === false) {
+                console.log('[yjsServer] terminating dead connection (missed pong)');
+                return ws.terminate();
+            }
+            ws.isAlive = false;
+            ws.ping();
+
+            const room = ws.__room;
+            if (room && ws.readyState === ws.OPEN) {
+                const encoder = encoding.createEncoder();
+                encoding.writeVarUint(encoder, messageSync);
+                syncProtocol.writeSyncStep1(encoder, room.ydoc);
+                ws.send(encoding.toUint8Array(encoder));
+            }
+        });
+    }, HEARTBEAT_INTERVAL_MS);
+
+    wss.on('close', () => clearInterval(interval));
+    return interval;
+}
 async function persistRoom(documentId, room) {
     console.log('[yjsServer] persistRoom starting for', documentId);
     try {
@@ -53,8 +83,6 @@ async function getOrCreateRoom(documentId) {
     const existingRoom = rooms.get(documentId);
     if (existingRoom) return existingRoom;
 
-    // A second caller arriving while the first is still hydrating waits on
-    // the SAME in-flight creation instead of racing past a half-set-up room.
     const existingLock = roomCreationLocks.get(documentId);
     if (existingLock) return existingLock;
 
@@ -65,8 +93,9 @@ async function getOrCreateRoom(documentId) {
 
         const room = { ydoc, awareness, conns: new Set(), persistTimer: null };
 
-        const existing = await Document.findById(documentId).select('+yjsState').lean();
+        const existing = await Document.findById(documentId).select('+yjsState +contentJSON').lean();
         console.log('[yjsServer] hydrate check — existing found:', !!existing, 'yjsState present:', !!(existing && existing.yjsState));
+
         if (existing && existing.yjsState) {
             try {
                 const stateBytes = Buffer.isBuffer(existing.yjsState)
@@ -75,6 +104,18 @@ async function getOrCreateRoom(documentId) {
                 Y.applyUpdate(ydoc, stateBytes, 'hydrate');
             } catch (err) {
                 console.error(`[yjsServer] CORRUPTED yjsState for document ${documentId}, starting empty:`, err.stack || err);
+            }
+        } else if (existing && existing.contentJSON) {
+            try {
+                console.log('[yjsServer] no yjsState found, seeding ydoc from contentJSON for', documentId);
+                const seededDoc = prosemirrorJSONToYDoc(schema, existing.contentJSON, YJS_FIELD_NAME);
+                const seedUpdate = Y.encodeStateAsUpdate(seededDoc);
+                Y.applyUpdate(ydoc, seedUpdate, 'hydrate-from-json');
+                seededDoc.destroy();
+
+                schedulePersist(documentId, room, 0);
+            } catch (err) {
+                console.error(`[yjsServer] Failed to seed ydoc from contentJSON for document ${documentId}, starting empty:`, err.stack || err);
             }
         }
 
@@ -90,10 +131,6 @@ async function getOrCreateRoom(documentId) {
                 }
             });
 
-            // Solo editor is the highest-risk case for a refresh losing the
-            // last edit — persist almost immediately instead of waiting the
-            // full debounce. With 2+ collaborators, stick to the longer
-            // debounce to avoid a write storm.
             const delay = room.conns.size <= 1 ? SOLO_PERSIST_DEBOUNCE_MS : PERSIST_DEBOUNCE_MS;
             schedulePersist(documentId, room, delay);
         });
@@ -126,7 +163,7 @@ function evictRoomIfEmpty(documentId, room) {
 }
 function initYjsServer(httpServer) {
     const wss = new WebSocketServer({ noServer: true });
-
+    startHeartbeat(wss);
     httpServer.on('upgrade', (request, socket, head) => {
         const { pathname, query } = parseUrl(request.url, true);
 
@@ -141,11 +178,6 @@ function initYjsServer(httpServer) {
 
         wss.handleUpgrade(request, socket, head, (ws) => {
         if (!entry || entry.documentId !== documentId) {
-                // Complete the handshake first (rather than rejecting at the raw
-                // HTTP level) so the client gets a real WS close event with a
-                // 4400-4499 code. y-websocket's client treats that range as
-                // "permanent failure, stop auto-retrying" — without it, the
-                // client kept hammering this same dead ticket forever.
                 ws.close(4401, 'Invalid or expired ticket');
                 return;
             }
@@ -162,6 +194,9 @@ function initYjsServer(httpServer) {
             console.log('[yjsServer] room ready, conns before add:', room.conns.size);
 
             room.conns.add(ws);
+            ws.isAlive = true;
+            ws.__room = room;
+            ws.on('pong', () => { ws.isAlive = true; });
             console.log('[yjsServer] ws added to room, conns now:', room.conns.size);
             ws.controlledAwarenessIds = new Set();
 
@@ -203,8 +238,13 @@ function initYjsServer(httpServer) {
                             const encoder = encoding.createEncoder();
                             encoding.writeVarUint(encoder, messageSync);
                             syncProtocol.readSyncMessage(decoder, encoder, room.ydoc, ws);
-                            if (encoding.length(encoder) > 1) {
+                            const replyLength = encoding.length(encoder);
+                            console.log('[yjsServer] sync reply computed, length:', replyLength, '(>1 means content will be sent)');
+                            if (replyLength > 1) {
                                 ws.send(encoding.toUint8Array(encoder));
+                                console.log('[yjsServer] sync reply SENT to client');
+                            } else {
+                                console.log('[yjsServer] no sync reply needed — server thinks client is already up to date');
                             }
                             break;
                         }
