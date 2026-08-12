@@ -16,16 +16,25 @@ async function generateText({prompt}){
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    console.log('[Gemini] URL:', url);
 
-    const response = await fetch(url,{
+    let response;
+    try {
+        response = await fetch(url,{
         method:'POST',
         headers:{'Content-type': 'application/json'},
         body:JSON.stringify({
             contents:[{parts :[{text:prompt}]}],
         }),
     });
+    } catch (networkErr) {
+        console.error('[Gemini] fetch threw:', networkErr); // full error incl. .cause
+        throw providerError(`Network error calling Gemini: ${networkErr.message}`);
+    }
 
     if(!response.ok){
+        const errorBody = await response.text();
+        console.error('[Gemini] error response body:', errorBody);
         throw providerError(`Gemini API error: ${response.status}`);
     }
 

@@ -4,7 +4,8 @@ const mongoose = require('mongoose');
 
 const env = require('./config/env');
 const { initYjsServer } = require('./lib/yjsServer');
-
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 async function start(){
     try{
         await mongoose.connect(env.MONGO_URI);

@@ -1,20 +1,20 @@
-const {runTextAction,runImageAction, VALID_ACTIONS,VALID_IMAGE_ACTIONS} = require('../services/aiService');
+const { runTextAction, runImageAction, VALID_ACTIONS, VALID_IMAGE_ACTIONS } = require('../services/aiService');
 
 const MAX_TEXT_LENGTH = 8000;
 
-async function handleTextAction(req,res,next){
-    try{
-        const {action,text,context}=req.body;
+async function handleTextAction(req, res, next) {
+    try {
+        const { action, text, context } = req.body;
 
-        if(!text || typeof text!=='string' || !text.trim()){
+        if (!text || typeof text !== 'string' || !text.trim()) {
             return res.status(400).json({
                 success: false,
                 error: { code: 'MISSING_TEXT', message: 'Selected text is required.' },
             });
         }
 
-        if(!VALID_ACTIONS.includes(action)){
-            return res.stays(400).json({
+        if (!VALID_ACTIONS.includes(action)) {
+            return res.status(400).json({
                 success: false,
                 error: {
                     code: 'INVALID_ACTION',
@@ -23,7 +23,7 @@ async function handleTextAction(req,res,next){
             });
         }
 
-        if(text.length > MAX_TEXT_LENGTH){
+        if (text.length > MAX_TEXT_LENGTH) {
             return res.status(400).json({
                 success: false,
                 error: {
@@ -33,16 +33,15 @@ async function handleTextAction(req,res,next){
             });
         }
 
-        const result = await runTextAction({action,text,context});
+        const result = await runTextAction({ action, text, context });
 
         return res.status(200).json({
             success: true,
             data: { action, result },
         });
-    }
-
-    catch(err){
+    } catch (err) {
         if (err.code === 'AI_PROVIDER_ERROR') {
+            console.error('[aiController] handleTextAction — AI provider error:', err.stack || err);
             return res.status(502).json({
                 success: false,
                 error: {
@@ -50,43 +49,41 @@ async function handleTextAction(req,res,next){
                     message: 'The AI provider request failed. Please try again shortly.',
                 },
             });
-            
-            console.log(err);
         }
         return next(err);
     }
 }
 
-async function handleImageAction(req,res,next){
-    try{
-        const {action,imageUrl} = req.body;
+async function handleImageAction(req, res, next) {
+    try {
+        const { action, imageUrl } = req.body;
 
-        if(!imageUrl || typeof imageUrl !=='string' || !imageUrl.trim()){
+        if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.trim()) {
             return res.status(400).json({
                 success: false,
                 error: { code: 'MISSING_IMAGE_URL', message: 'imageUrl is required.' },
             });
         }
 
-        if(!VALID_IMAGE_ACTIONS.includes(action)){
+        if (!VALID_IMAGE_ACTIONS.includes(action)) {
             return res.status(400).json({
                 success: false,
                 error: {
-                code: 'INVALID_ACTION',
-                message: `Action must be one of: ${VALID_IMAGE_ACTIONS.join(', ')}`,
+                    code: 'INVALID_ACTION',
+                    message: `Action must be one of: ${VALID_IMAGE_ACTIONS.join(', ')}`,
                 },
             });
         }
 
-        const result = await runImageAction({action,imageUrl});
+        const result = await runImageAction({ action, imageUrl });
 
         return res.status(200).json({
             success: true,
             data: { action, result },
         });
-    }
-    catch(err){
+    } catch (err) {
         if (err.code === 'AI_PROVIDER_ERROR') {
+            console.error('[aiController] handleImageAction — AI provider error:', err.stack || err);
             return res.status(502).json({
                 success: false,
                 error: {
@@ -94,9 +91,9 @@ async function handleImageAction(req,res,next){
                     message: 'The AI provider request failed. Please try again shortly.',
                 },
             });
-            console.log(err);
         }
         return next(err);
     }
 }
-module.exports = {handleTextAction, handleImageAction};
+
+module.exports = { handleTextAction, handleImageAction };

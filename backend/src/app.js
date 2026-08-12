@@ -18,7 +18,6 @@ app.use(cors({
 }));
 app.use(express.json({limit:'10mb'}));
 
-console.log("Index.js loaded");
 
 // check backend
 app.get("/", (req, res) => {
@@ -31,7 +30,7 @@ app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/workspaces/:workspaceId/members", memberRoutes);
 app.use("/api/workspaces/:workspaceId/folders",folderRoutes);
 app.use("/api/workspaces/:workspaceId/documents",documentRoutes);
-app.use('/api/workspaces/:workspaceId/ai', aiRoutes);
+app.use('/api/workspaces/:workspaceId/documents/:documentId/ai', aiRoutes);
 app.use('/api/workspaces/:workspaceId/images',imageRoutes);
 // error handler 
 app.use(errorHandler);

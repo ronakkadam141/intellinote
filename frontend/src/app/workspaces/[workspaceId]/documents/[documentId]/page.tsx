@@ -19,7 +19,7 @@ interface DocumentDetail {
 
 const YJS_FIELD_NAME = "default";
 const TITLE_AUTOSAVE_DELAY_MS = 1500;
-const SYNC_TIMEOUT_MS = 2500;
+const SYNC_TIMEOUT_MS = 4000;
 const MAX_CONNECT_ATTEMPTS = 4;
 
 type TitleStatus = "idle" | "saving" | "saved" | "error";
@@ -42,13 +42,10 @@ function DocumentEditorContent() {
 
     const [ydoc] = useState(() => new Y.Doc());
 
-    useEffect(() => {
-        const logUpdate = (update: Uint8Array, origin: unknown) => {
-            console.log('[DEBUG] ydoc update — byteLength:', update.length, 'origin:', origin, 'ydoc content now:', ydoc.getXmlFragment(YJS_FIELD_NAME).toString());
-        };
-        ydoc.on('update', logUpdate);
-        return () => { ydoc.off('update', logUpdate); };
-    }, [ydoc]);
+    const [selectedText, setSelectedText] = useState("");
+    const [summary, setSummary] = useState<string | null>(null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiError, setAiError] = useState<string | null>(null);
 
     const editor = useEditor({
         immediatelyRender: false,
@@ -64,9 +61,18 @@ function DocumentEditorContent() {
     });
 
     useEffect(() => {
-        if (editor) {
-            console.log('[DEBUG] editor ready, current text:', editor.getText());
+        if (!editor) return;
+        const activeEditor = editor; // captured as a const so TS narrows it as non-null for the whole closure below
+
+        function handleSelectionUpdate() {
+            const { from, to } = activeEditor.state.selection;
+            setSelectedText(activeEditor.state.doc.textBetween(from, to, " "));
         }
+
+        activeEditor.on("selectionUpdate", handleSelectionUpdate);
+        return () => {
+            activeEditor.off("selectionUpdate", handleSelectionUpdate);
+        };
     }, [editor]);
 
     useEffect(() => {
@@ -164,7 +170,7 @@ function DocumentEditorContent() {
                     sessionStorage.setItem(retryKey, String(nextAttempts));
                     console.warn(`[sync] stuck — reloading (attempt ${nextAttempts}/${MAX_CONNECT_ATTEMPTS})`);
                     window.location.reload();
-                }, 4000);
+                }, SYNC_TIMEOUT_MS);
 
                 p.on("sync", (isSynced: boolean) => {
                     if (isSynced) {
@@ -191,6 +197,7 @@ function DocumentEditorContent() {
             providerRef.current = null;
         };
     }, [workspaceId, documentId, ydoc]);
+
     useEffect(() => {
         function handleBeforeUnload() {
             const p = providerRef.current;
@@ -231,6 +238,28 @@ function DocumentEditorContent() {
         saveTitle(title);
     }
 
+    // ASSUMPTION (see note above code block): route path, request body shape
+    // { action, text, context }, and response shape { success, data: { result } }
+    // all match aiController.js's handleTextAction as currently written.
+    // Adjust once aiService.js confirms the real action name / return shape.
+    async function handleSummarize() {
+        if (!selectedText.trim()) return;
+        setAiLoading(true);
+        setAiError(null);
+        setSummary(null);
+        try {
+            const data = await apiClient.post<{ action: string; result: string }>(
+                `/api/workspaces/${workspaceId}/documents/${documentId}/ai/text`,
+                { action: "summarize", text: selectedText },
+            );
+            setSummary(data.result);
+        } catch (err) {
+            setAiError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Summarization failed.");
+        } finally {
+            setAiLoading(false);
+        }
+    }
+
     useEffect(() => {
         return () => {
             if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
@@ -265,7 +294,41 @@ function DocumentEditorContent() {
                 )}
             </p>
 
-            <EditorContent editor={editor} />
+            <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                    <EditorContent editor={editor} />
+                </div>
+
+                <aside
+                    style={{
+                        width: "280px",
+                        flexShrink: 0,
+                        border: "1px solid #ccc",
+                        borderRadius: "6px",
+                        padding: "1rem",
+                        position: "sticky",
+                        top: "1rem",
+                    }}
+                >
+                    <h3 style={{ marginTop: 0 }}>AI Actions</h3>
+                    <button onClick={handleSummarize} disabled={!selectedText.trim() || aiLoading}>
+                        {aiLoading ? "Summarizing..." : "Summarize Selection"}
+                    </button>
+
+                    {!selectedText.trim() && (
+                        <p style={{ fontSize: "0.85rem", color: "#666" }}>Select some text in the document first.</p>
+                    )}
+
+                    {aiError && <p style={{ color: "red" }}>{aiError}</p>}
+
+                    {summary && (
+                        <div style={{ marginTop: "1rem" }}>
+                            <strong>Summary:</strong>
+                            <p>{summary}</p>
+                        </div>
+                    )}
+                </aside>
+            </div>
         </div>
     );
 }
