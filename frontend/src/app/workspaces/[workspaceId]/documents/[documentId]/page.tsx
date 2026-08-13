@@ -9,6 +9,7 @@ import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
+import ResizableImage from 'tiptap-extension-resize-image';
 
 interface DocumentDetail {
     id: string;
@@ -66,12 +67,20 @@ function DocumentEditorContent() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [actionResult, setActionResult] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
+        
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    const [workspaceRole, setWorkspaceRole] = useState<'owner' | 'editor' | 'viewer' | null>(null);
+    const canEdit = workspaceRole === 'owner' || workspaceRole === 'editor';
 
     const editor = useEditor({
         immediatelyRender: false,
         extensions: [
             StarterKit.configure({ undoRedo: false }),
             Collaboration.configure({ document: ydoc, field: YJS_FIELD_NAME }),
+            ResizableImage,
         ],
         editorProps: {
             attributes: {
@@ -98,12 +107,15 @@ function DocumentEditorContent() {
     useEffect(() => {
         let cancelled = false;
 
-        apiClient
-            .get<{ document: DocumentDetail }>(`/api/workspaces/${workspaceId}/documents/${documentId}`)
-            .then(({ document }) => {
+        Promise.all([
+            apiClient.get<{ document: DocumentDetail }>(`/api/workspaces/${workspaceId}/documents/${documentId}`),
+            apiClient.get<{ role: 'owner' | 'editor' | 'viewer' }>(`/api/workspaces/${workspaceId}/members/me`),
+        ])
+            .then(([docRes, memberRes]) => {
                 if (cancelled) return;
-                setTitle(document.title);
-                setFolderId(document.folderId);
+                setTitle(docRes.document.title);
+                setFolderId(docRes.document.folderId);
+                setWorkspaceRole(memberRes.role);
             })
             .catch((err) => {
                 if (!cancelled) {
@@ -230,6 +242,44 @@ function DocumentEditorContent() {
         [workspaceId, documentId],
     );
 
+    const handleImageFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        // reset the input immediately so selecting the same file twice in a row
+        // still fires onChange
+        e.target.value = '';
+        if (!file || !editor) return;
+
+        setUploadError(null);
+        setIsUploadingImage(true);
+
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+            formData.append('documentId', documentId);
+
+            // apiClient.post must be called in a way that doesn't force
+            // Content-Type: application/json — FormData needs the browser to set
+            // its own multipart boundary header. If apiClient always sets JSON
+            // headers, this call needs a raw fetch instead; confirm apiClient
+            // supports FormData bodies before relying on this as-is.
+            const response = await apiClient.post<{ imageUrl: string }>(
+                `/api/workspaces/${workspaceId}/images`,
+                formData
+            );
+
+            editor.chain().focus().setImage({ src: response.imageUrl }).run();
+        } catch (err) {
+            if (err instanceof ApiError && err.status === 403) {
+                setUploadError("You don't have permission to add images to this document.");
+            } else if (err instanceof ApiError && err.status === 400) {
+                setUploadError(err.message || 'Image upload failed — check file type/size.');
+            } else {
+                setUploadError('Image upload failed. Please try again.');
+            }
+        } finally {
+            setIsUploadingImage(false);
+        }
+    };
     function handleTitleChange(e: ChangeEvent<HTMLInputElement>) {
         const value = e.target.value;
         setTitle(value);
@@ -345,6 +395,25 @@ function DocumentEditorContent() {
                         ))}
                     </div>
 
+                    {canEdit && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleImageFileSelected}
+                                style={{ display: 'none' }}
+                            />
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploadingImage}
+                            >
+                                {isUploadingImage ? 'Uploading...' : 'Insert Image'}
+                            </button>
+                            {uploadError && <p style={{ color: 'red' }}>{uploadError}</p>}
+                        </div>
+                    )}
+                    
                     {actionError && <p style={{ color: "red" }}>{actionError}</p>}
 
                     {actionResult && activeAction && (

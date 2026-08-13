@@ -35,32 +35,42 @@ interface RequestOptions extends Omit<RequestInit,"body">{
     body?:unknown;
 }
 
-async function request<T>(path:string, options:RequestOptions = {}):Promise<T>{
-    const token = typeof window!== "undefined" ? localStorage.getItem("token") :null;
-    
-    const headers :HeadersInit ={
-        "Content-Type": "application/json",
-        ...(token?{Authorization:`Bearer ${token}`}:{}),
-        ...options.headers,
-    }
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const isFormData = options.body instanceof FormData;
 
-    const res = await fetch(`${API_URL}${path}`,{
+    const headers: HeadersInit = {
+        // Only force JSON content-type for JSON bodies. For FormData, omit
+        // Content-Type entirely so the browser sets its own multipart
+        // boundary — setting it manually here breaks file uploads, which is
+        // exactly what was causing MISSING_FILE (multer never saw a real
+        // multipart body).
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+    };
+
+    const res = await fetch(`${API_URL}${path}`, {
         ...options,
         headers,
-        body:options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        body:
+            options.body === undefined
+                ? undefined
+                : isFormData
+                ? (options.body as FormData)
+                : JSON.stringify(options.body),
     });
 
-    let json : ApiResponse<T>;
+    let json: ApiResponse<T>;
 
-    try{
+    try {
         json = await res.json();
-    }
-    catch{
-        throw new ApiError("Couldn't reach server.","NETWORK_ERROR",res.status||0);
+    } catch {
+        throw new ApiError("Couldn't reach server.", "NETWORK_ERROR", res.status || 0);
     }
 
-    if(!json.success){
-        throw new ApiError(json.error.message, json.error.code,res.status);
+    if (!json.success) {
+        throw new ApiError(json.error.message, json.error.code, res.status);
     }
 
     return json.data;

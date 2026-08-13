@@ -9,7 +9,7 @@ const memberRoutes=require('./routes/member');
 const workspaceRoutes=require('./routes/workspace');
 const aiRoutes = require('./routes/ai');
 const imageRoutes = require('./routes/images')
-
+const workspaceMembersRoutes= require('./routes/workspaceMembers');
 const app = express();
 
 app.use(cors({
@@ -32,6 +32,7 @@ app.use("/api/workspaces/:workspaceId/folders",folderRoutes);
 app.use("/api/workspaces/:workspaceId/documents",documentRoutes);
 app.use('/api/workspaces/:workspaceId/documents/:documentId/ai', aiRoutes);
 app.use('/api/workspaces/:workspaceId/images',imageRoutes);
+app.use('/api/workspaces/:workspaceId/members', workspaceMembersRoutes);
 // error handler 
 app.use(errorHandler);
 
