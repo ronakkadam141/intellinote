@@ -22,6 +22,19 @@ const TITLE_AUTOSAVE_DELAY_MS = 1500;
 const SYNC_TIMEOUT_MS = 4000;
 const MAX_CONNECT_ATTEMPTS = 4;
 
+// Constants are fine at module scope — only hooks (useState etc.) must live
+// inside the component. This was the actual bug: the useState calls below
+// used to sit up here too.
+const TEXT_ACTIONS = [
+  { action: 'summarize', label: 'Summarize Selection' },
+  { action: 'explain', label: 'Explain Simply' },
+  { action: 'improve', label: 'Improve Writing' },
+  { action: 'bullets', label: 'Convert to Bullet Points' },
+  { action: 'quiz', label: 'Generate Quiz Questions' },
+] as const;
+
+type TextAction = typeof TEXT_ACTIONS[number]['action'];
+
 type TitleStatus = "idle" | "saving" | "saved" | "error";
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -42,10 +55,17 @@ function DocumentEditorContent() {
 
     const [ydoc] = useState(() => new Y.Doc());
 
+    // Still needed — tracks the current selection so handleTextAction doesn't
+    // need to reach into the editor closure a second time.
     const [selectedText, setSelectedText] = useState("");
-    const [summary, setSummary] = useState<string | null>(null);
-    const [aiLoading, setAiLoading] = useState(false);
-    const [aiError, setAiError] = useState<string | null>(null);
+
+    // Generalized AI-action state, correctly inside the component this time.
+    // Removed the old summary/aiLoading/aiError state — it was a duplicate
+    // of what these four now cover for all 5 actions, not just summarize.
+    const [activeAction, setActiveAction] = useState<TextAction | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [actionResult, setActionResult] = useState<string | null>(null);
+    const [actionError, setActionError] = useState<string | null>(null);
 
     const editor = useEditor({
         immediatelyRender: false,
@@ -62,7 +82,7 @@ function DocumentEditorContent() {
 
     useEffect(() => {
         if (!editor) return;
-        const activeEditor = editor; // captured as a const so TS narrows it as non-null for the whole closure below
+        const activeEditor = editor; // narrowed non-null for this closure only
 
         function handleSelectionUpdate() {
             const { from, to } = activeEditor.state.selection;
@@ -99,12 +119,6 @@ function DocumentEditorContent() {
         };
     }, [workspaceId, documentId]);
 
-    // Fetch a ws-ticket, then connect the Yjs WebSocket provider to the
-    // already-existing ydoc. If sync doesn't complete within SYNC_TIMEOUT_MS,
-    // the connection is presumed stuck (a known race in the underlying
-    // library when a fresh connection follows a very recent one for the
-    // same document) — kill it and retry with a brand new ticket rather
-    // than leaving the user staring at a blank editor.
     useEffect(() => {
         let cancelled = false;
         let provider: WebsocketProvider | null = null;
@@ -152,12 +166,6 @@ function DocumentEditorContent() {
                     if (!cancelled) setConnectionStatus("disconnected");
                 });
 
-                // A stuck handshake here means the client's Y.Doc state is
-                // confused — retrying in-place with the same doc doesn't help,
-                // it needs a completely fresh Y.Doc, which only a real reload
-                // gives us. Capped via sessionStorage (survives the reload,
-                // unlike any in-memory counter) so a genuinely broken
-                // connection surfaces as an error instead of reloading forever.
                 syncTimeout = setTimeout(() => {
                     if (cancelled) return;
                     const nextAttempts = retryAttempts + 1;
@@ -238,27 +246,36 @@ function DocumentEditorContent() {
         saveTitle(title);
     }
 
-    // ASSUMPTION (see note above code block): route path, request body shape
-    // { action, text, context }, and response shape { success, data: { result } }
-    // all match aiController.js's handleTextAction as currently written.
-    // Adjust once aiService.js confirms the real action name / return shape.
-    async function handleSummarize() {
-        if (!selectedText.trim()) return;
-        setAiLoading(true);
-        setAiError(null);
-        setSummary(null);
-        try {
-            const data = await apiClient.post<{ action: string; result: string }>(
-                `/api/workspaces/${workspaceId}/documents/${documentId}/ai/text`,
-                { action: "summarize", text: selectedText },
-            );
-            setSummary(data.result);
-        } catch (err) {
-            setAiError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Summarization failed.");
-        } finally {
-            setAiLoading(false);
+    // Reads from `selectedText` state (already kept in sync by the
+    // selectionUpdate effect above) instead of reaching for `activeEditor`,
+    // which doesn't exist in this scope — that was the ReferenceError bug.
+    const handleTextAction = async (action: TextAction) => {
+        if (!selectedText.trim()) {
+            setActionError('Select some text first.');
+            return;
         }
-    }
+
+        setActiveAction(action);
+        setIsProcessing(true);
+        setActionError(null);
+        setActionResult(null);
+
+        try {
+            const response = await apiClient.post<{ action: string; result: string }>(
+                `/api/workspaces/${workspaceId}/documents/${documentId}/ai/text`,
+                { action, text: selectedText }
+            );
+            setActionResult(response.result);
+        } catch (err) {
+            if (err instanceof ApiError && err.status === 429) {
+                setActionError('Too many AI requests — please wait a few minutes and try again.');
+            } else {
+                setActionError('AI action failed. Please try again.');
+            }
+        } finally {
+            setIsProcessing(false);
+        }
+    };
 
     useEffect(() => {
         return () => {
@@ -311,20 +328,31 @@ function DocumentEditorContent() {
                     }}
                 >
                     <h3 style={{ marginTop: 0 }}>AI Actions</h3>
-                    <button onClick={handleSummarize} disabled={!selectedText.trim() || aiLoading}>
-                        {aiLoading ? "Summarizing..." : "Summarize Selection"}
-                    </button>
 
                     {!selectedText.trim() && (
                         <p style={{ fontSize: "0.85rem", color: "#666" }}>Select some text in the document first.</p>
                     )}
 
-                    {aiError && <p style={{ color: "red" }}>{aiError}</p>}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                        {TEXT_ACTIONS.map(({ action, label }) => (
+                            <button
+                                key={action}
+                                onClick={() => handleTextAction(action)}
+                                disabled={!selectedText.trim() || isProcessing}
+                            >
+                                {isProcessing && activeAction === action ? `${label}…` : label}
+                            </button>
+                        ))}
+                    </div>
 
-                    {summary && (
+                    {actionError && <p style={{ color: "red" }}>{actionError}</p>}
+
+                    {actionResult && activeAction && (
                         <div style={{ marginTop: "1rem" }}>
-                            <strong>Summary:</strong>
-                            <p>{summary}</p>
+                            <strong>
+                                {TEXT_ACTIONS.find((a) => a.action === activeAction)?.label} result:
+                            </strong>
+                            <p style={{ whiteSpace: "pre-wrap" }}>{actionResult}</p>
                         </div>
                     )}
                 </aside>
