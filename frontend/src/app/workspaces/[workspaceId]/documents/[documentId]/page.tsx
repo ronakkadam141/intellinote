@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, ChangeEvent } from "react";
 import { useParams } from "next/navigation";
 import { useEditor, EditorContent } from "@tiptap/react";
+import { NodeSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import Collaboration from "@tiptap/extension-collaboration";
 import * as Y from "yjs";
@@ -23,9 +24,6 @@ const TITLE_AUTOSAVE_DELAY_MS = 1500;
 const SYNC_TIMEOUT_MS = 4000;
 const MAX_CONNECT_ATTEMPTS = 4;
 
-// Constants are fine at module scope — only hooks (useState etc.) must live
-// inside the component. This was the actual bug: the useState calls below
-// used to sit up here too.
 const TEXT_ACTIONS = [
   { action: 'summarize', label: 'Summarize Selection' },
   { action: 'explain', label: 'Explain Simply' },
@@ -36,8 +34,39 @@ const TEXT_ACTIONS = [
 
 type TextAction = typeof TEXT_ACTIONS[number]['action'];
 
+// Mirrors TEXT_ACTIONS. Values must match backend VALID_IMAGE_ACTIONS exactly.
+const IMAGE_ACTIONS = [
+  { action: 'explainDiagram', label: 'Explain Diagram' },
+  { action: 'summarizeImage', label: 'Summarize Image' },
+  { action: 'extractNotes', label: 'Extract Notes' },
+  { action: 'identifyConcepts', label: 'Identify Concepts' },
+] as const;
+
+type ImageAction = typeof IMAGE_ACTIONS[number]['action'];
+
 type TitleStatus = "idle" | "saving" | "saved" | "error";
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
+
+// Minimal shared button styling — Tailwind preflight strips native button
+// chrome (border/background), which is why buttons were rendering as bare
+// text. Not a new stylesheet, just inline style objects.
+const actionButtonStyle: React.CSSProperties = {
+    padding: "0.4rem 0.6rem",
+    border: "1px solid #444",
+    borderRadius: "4px",
+    background: "#1f1f1f",
+    color: "inherit",
+    cursor: "pointer",
+    textAlign: "left",
+    width: "100%",
+};
+
+const primaryButtonStyle: React.CSSProperties = {
+    ...actionButtonStyle,
+    background: "#2563eb",
+    borderColor: "#2563eb",
+    color: "#fff",
+};
 
 function DocumentEditorContent() {
     const { workspaceId, documentId } = useParams<{ workspaceId: string; documentId: string }>();
@@ -56,21 +85,27 @@ function DocumentEditorContent() {
 
     const [ydoc] = useState(() => new Y.Doc());
 
-    // Still needed — tracks the current selection so handleTextAction doesn't
-    // need to reach into the editor closure a second time.
     const [selectedText, setSelectedText] = useState("");
 
-    // Generalized AI-action state, correctly inside the component this time.
-    // Removed the old summary/aiLoading/aiError state — it was a duplicate
-    // of what these four now cover for all 5 actions, not just summarize.
     const [activeAction, setActiveAction] = useState<TextAction | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [actionResult, setActionResult] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
-        
+
+    // Image-selection + image-action state, same shape as text actions.
+    const [selectedImage, setSelectedImage] = useState<{ src: string; top: number; left: number } | null>(null);
+    const [activeImageAction, setActiveImageAction] = useState<ImageAction | null>(null);
+    const [isProcessingImage, setIsProcessingImage] = useState(false);
+    const [imageActionResult, setImageActionResult] = useState<string | null>(null);
+    const [imageActionError, setImageActionError] = useState<string | null>(null);
+
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    // Wraps EditorContent so the floating toolbar can be positioned
+    // relative to it instead of the viewport.
+    const editorWrapperRef = useRef<HTMLDivElement | null>(null);
 
     const [workspaceRole, setWorkspaceRole] = useState<'owner' | 'editor' | 'viewer' | null>(null);
     const canEdit = workspaceRole === 'owner' || workspaceRole === 'editor';
@@ -89,13 +124,47 @@ function DocumentEditorContent() {
         },
     });
 
+    // Clears our toolbar state AND actually moves Tiptap's selection off the
+    // image node. Without this, ProseMirror still considers the image
+    // "selected" (leaving its highlight box up), and clicking the same
+    // image again wouldn't fire a new selectionUpdate event since the
+    // selection wouldn't actually be changing.
+    const clearImageSelection = useCallback(() => {
+        setSelectedImage(null);
+        if (editor && !editor.isDestroyed) {
+            editor.commands.setTextSelection(editor.state.selection.to);
+        }
+    }, [editor]);
+
     useEffect(() => {
         if (!editor) return;
-        const activeEditor = editor; // narrowed non-null for this closure only
+        const activeEditor = editor;
 
         function handleSelectionUpdate() {
-            const { from, to } = activeEditor.state.selection;
+            const { selection } = activeEditor.state;
+            const { from, to } = selection;
             setSelectedText(activeEditor.state.doc.textBetween(from, to, " "));
+
+            // Detect an image node selection and compute toolbar position.
+            // tiptap-extension-resize-image registers its node under the name
+            // "imageResize" in most versions; matching case-insensitively on
+            // "image" covers that and the plain @tiptap/extension-image name
+            // without hardcoding a version-specific string.
+            if (selection instanceof NodeSelection && /image/i.test(selection.node.type.name)) {
+                const dom = activeEditor.view.nodeDOM(selection.from) as HTMLElement | null;
+                const wrapperEl = editorWrapperRef.current;
+                if (dom && wrapperEl) {
+                    const imgRect = dom.getBoundingClientRect();
+                    const wrapperRect = wrapperEl.getBoundingClientRect();
+                    setSelectedImage({
+                        src: selection.node.attrs.src,
+                        top: imgRect.top - wrapperRect.top,
+                        left: imgRect.left - wrapperRect.left,
+                    });
+                    return;
+                }
+            }
+            setSelectedImage(null);
         }
 
         activeEditor.on("selectionUpdate", handleSelectionUpdate);
@@ -229,6 +298,21 @@ function DocumentEditorContent() {
         return () => window.removeEventListener("beforeunload", handleBeforeUnload);
     }, []);
 
+    // Closes the image toolbar when clicking anywhere outside the editor
+    // (Tiptap's selectionUpdate only fires for selection changes *inside*
+    // the editor, so clicks on the sidebar/page background never reach it).
+    useEffect(() => {
+        function handleDocMouseDown(e: MouseEvent) {
+            if (!selectedImage) return;
+            const wrapperEl = editorWrapperRef.current;
+            if (wrapperEl && !wrapperEl.contains(e.target as Node)) {
+                clearImageSelection();
+            }
+        }
+        document.addEventListener('mousedown', handleDocMouseDown);
+        return () => document.removeEventListener('mousedown', handleDocMouseDown);
+    }, [selectedImage, clearImageSelection]);
+
     const saveTitle = useCallback(
         async (value: string) => {
             setTitleStatus("saving");
@@ -244,8 +328,6 @@ function DocumentEditorContent() {
 
     const handleImageFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        // reset the input immediately so selecting the same file twice in a row
-        // still fires onChange
         e.target.value = '';
         if (!file || !editor) return;
 
@@ -257,11 +339,6 @@ function DocumentEditorContent() {
             formData.append('image', file);
             formData.append('documentId', documentId);
 
-            // apiClient.post must be called in a way that doesn't force
-            // Content-Type: application/json — FormData needs the browser to set
-            // its own multipart boundary header. If apiClient always sets JSON
-            // headers, this call needs a raw fetch instead; confirm apiClient
-            // supports FormData bodies before relying on this as-is.
             const response = await apiClient.post<{ imageUrl: string }>(
                 `/api/workspaces/${workspaceId}/images`,
                 formData
@@ -280,6 +357,7 @@ function DocumentEditorContent() {
             setIsUploadingImage(false);
         }
     };
+
     function handleTitleChange(e: ChangeEvent<HTMLInputElement>) {
         const value = e.target.value;
         setTitle(value);
@@ -296,9 +374,6 @@ function DocumentEditorContent() {
         saveTitle(title);
     }
 
-    // Reads from `selectedText` state (already kept in sync by the
-    // selectionUpdate effect above) instead of reaching for `activeEditor`,
-    // which doesn't exist in this scope — that was the ReferenceError bug.
     const handleTextAction = async (action: TextAction) => {
         if (!selectedText.trim()) {
             setActionError('Select some text first.');
@@ -327,6 +402,34 @@ function DocumentEditorContent() {
         }
     };
 
+    // Same shape as handleTextAction, hits the image endpoint instead.
+    const handleImageAction = async (action: ImageAction) => {
+        if (!selectedImage) return;
+        const imageUrl = selectedImage.src; // capture before clearing state below
+
+        setActiveImageAction(action);
+        setIsProcessingImage(true);
+        setImageActionError(null);
+        setImageActionResult(null);
+        clearImageSelection(); // hide toolbar + deselect image immediately on click
+
+        try {
+            const response = await apiClient.post<{ action: string; result: string }>(
+                `/api/workspaces/${workspaceId}/documents/${documentId}/ai/image`,
+                { action, imageUrl }
+            );
+            setImageActionResult(response.result);
+        } catch (err) {
+            if (err instanceof ApiError && err.status === 429) {
+                setImageActionError('Too many AI requests — please wait a few minutes and try again.');
+            } else {
+                setImageActionError('AI action failed. Please try again.');
+            }
+        } finally {
+            setIsProcessingImage(false);
+        }
+    };
+
     useEffect(() => {
         return () => {
             if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
@@ -347,7 +450,7 @@ function DocumentEditorContent() {
 
             <div>
                 <input type="text" value={title} onChange={handleTitleChange} placeholder="Untitled" />
-                <button onClick={handleManualSave} disabled={titleStatus === "saving"}>
+                <button style={actionButtonStyle} onClick={handleManualSave} disabled={titleStatus === "saving"}>
                     {titleStatus === "saving" ? "Saving..." : "Save title"}
                 </button>
                 {titleStatus === "saved" && <span> Saved</span>}
@@ -362,8 +465,43 @@ function DocumentEditorContent() {
             </p>
 
             <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-                <div style={{ flex: 1 }}>
+                <div ref={editorWrapperRef} style={{ flex: 1, position: "relative" }}>
                     <EditorContent editor={editor} />
+
+                    {/* Floating toolbar over the selected embedded image */}
+                    {selectedImage && (
+                        <div
+                            style={{
+                                position: "absolute",
+                                top: Math.max(selectedImage.top - 44, 0),
+                                left: selectedImage.left,
+                                display: "flex",
+                                gap: "0.25rem",
+                                background: "#111",
+                                border: "1px solid #444",
+                                borderRadius: "4px",
+                                padding: "0.25rem",
+                                zIndex: 10,
+                            }}
+                        >
+                            {IMAGE_ACTIONS.map(({ action, label }) => (
+                                <button
+                                    key={action}
+                                    onClick={() => handleImageAction(action)}
+                                    disabled={isProcessingImage}
+                                    style={{
+                                        ...primaryButtonStyle,
+                                        width: "auto",
+                                        padding: "0.3rem 0.5rem",
+                                        fontSize: "0.75rem",
+                                    }}
+                                    title={label}
+                                >
+                                    {isProcessingImage && activeImageAction === action ? "…" : label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 <aside
@@ -379,14 +517,17 @@ function DocumentEditorContent() {
                 >
                     <h3 style={{ marginTop: 0 }}>AI Actions</h3>
 
-                    {!selectedText.trim() && (
-                        <p style={{ fontSize: "0.85rem", color: "#666" }}>Select some text in the document first.</p>
+                    {!selectedText.trim() && !selectedImage && (
+                        <p style={{ fontSize: "0.85rem", color: "#666" }}>
+                            Select text, or click an image, to see AI actions.
+                        </p>
                     )}
 
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                         {TEXT_ACTIONS.map(({ action, label }) => (
                             <button
                                 key={action}
+                                style={actionButtonStyle}
                                 onClick={() => handleTextAction(action)}
                                 disabled={!selectedText.trim() || isProcessing}
                             >
@@ -396,7 +537,7 @@ function DocumentEditorContent() {
                     </div>
 
                     {canEdit && (
-                        <div style={{ marginBottom: '0.5rem' }}>
+                        <div style={{ margin: '0.75rem 0' }}>
                             <input
                                 ref={fileInputRef}
                                 type="file"
@@ -405,6 +546,7 @@ function DocumentEditorContent() {
                                 style={{ display: 'none' }}
                             />
                             <button
+                                style={actionButtonStyle}
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploadingImage}
                             >
@@ -413,7 +555,7 @@ function DocumentEditorContent() {
                             {uploadError && <p style={{ color: 'red' }}>{uploadError}</p>}
                         </div>
                     )}
-                    
+
                     {actionError && <p style={{ color: "red" }}>{actionError}</p>}
 
                     {actionResult && activeAction && (
@@ -422,6 +564,27 @@ function DocumentEditorContent() {
                                 {TEXT_ACTIONS.find((a) => a.action === activeAction)?.label} result:
                             </strong>
                             <p style={{ whiteSpace: "pre-wrap" }}>{actionResult}</p>
+                        </div>
+                    )}
+
+                    {/* Image action result, same pattern as text result above */}
+                    {imageActionError && <p style={{ color: "red" }}>{imageActionError}</p>}
+
+                    {isProcessingImage && activeImageAction && (
+                        <div style={{ marginTop: "1rem" }}>
+                            <strong>
+                                {IMAGE_ACTIONS.find((a) => a.action === activeImageAction)?.label} result:
+                            </strong>
+                            <p style={{ color: "#888" }}>Performing action…</p>
+                        </div>
+                    )}
+
+                    {!isProcessingImage && imageActionResult && activeImageAction && (
+                        <div style={{ marginTop: "1rem" }}>
+                            <strong>
+                                {IMAGE_ACTIONS.find((a) => a.action === activeImageAction)?.label} result:
+                            </strong>
+                            <p style={{ whiteSpace: "pre-wrap" }}>{imageActionResult}</p>
                         </div>
                     )}
                 </aside>
