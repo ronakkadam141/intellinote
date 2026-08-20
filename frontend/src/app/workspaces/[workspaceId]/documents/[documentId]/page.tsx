@@ -394,6 +394,8 @@ function DocumentEditorContent() {
         } catch (err) {
             if (err instanceof ApiError && err.status === 429) {
                 setActionError('Too many AI requests — please wait a few minutes and try again.');
+            } else if (err instanceof ApiError && err.code === 'AI_TIMEOUT') {
+                setActionError('The AI is taking longer than usual — please try again.');
             } else {
                 setActionError('AI action failed. Please try again.');
             }
@@ -422,6 +424,8 @@ function DocumentEditorContent() {
         } catch (err) {
             if (err instanceof ApiError && err.status === 429) {
                 setImageActionError('Too many AI requests — please wait a few minutes and try again.');
+            } else if (err instanceof ApiError && err.code === 'AI_TIMEOUT') {
+                setImageActionError('The AI is taking longer than usual — please try again.');
             } else {
                 setImageActionError('AI action failed. Please try again.');
             }
