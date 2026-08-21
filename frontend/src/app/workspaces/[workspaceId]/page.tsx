@@ -16,9 +16,6 @@ interface FolderWithParent extends Folder {
     parentFolderId: string | null;
 }
 
-// Local, self-contained shape for the "Move to..." picker — deliberately not
-// tied to the imported Folder type, since we only need these three fields
-// plus a computed depth for indentation.
 interface FolderTreeNode {
     id: string;
     name: string;
@@ -32,10 +29,6 @@ function keyFor(type: ItemType, id: string) {
     return `${type}:${id}`;
 }
 
-// Recursively walks GET /folders (which only returns one level at a time)
-// to build a full flat list of every folder in the workspace, indented by
-// depth. Only called on-demand when a Move picker is opened — not on page
-// load — since most page loads never need the whole tree.
 async function fetchAllFoldersFlat(workspaceId: string): Promise<FolderTreeNode[]> {
     const result: FolderTreeNode[] = [];
 
@@ -54,65 +47,10 @@ async function fetchAllFoldersFlat(workspaceId: string): Promise<FolderTreeNode[
     return result;
 }
 
-// Given the full flat tree, returns every descendant id of rootId — used to
-// stop a folder from being offered as a move-target for itself or its own
-// subtree (the backend already rejects this; this just keeps the dropdown
-// from offering an option that would fail).
 function getDescendantIds(tree: FolderTreeNode[], rootId: string): string[] {
     const children = tree.filter((f) => f.parentFolderId === rootId).map((f) => f.id);
     return children.reduce<string[]>((acc, cid) => [...acc, cid, ...getDescendantIds(tree, cid)], []);
 }
-
-// Minimal shared styling — same rationale as the document editor page:
-// Tailwind preflight strips native button chrome, so bare <button> elements
-// render as invisible text without this.
-const kebabButtonStyle: React.CSSProperties = {
-    border: "1px solid #444",
-    borderRadius: "4px",
-    background: "#1f1f1f",
-    color: "inherit",
-    cursor: "pointer",
-    padding: "0.1rem 0.5rem",
-};
-
-const menuStyle: React.CSSProperties = {
-    position: "absolute",
-    top: "1.6rem",
-    left: 0,
-    zIndex: 20,
-    display: "flex",
-    flexDirection: "column",
-    background: "#111",
-    border: "1px solid #444",
-    borderRadius: "4px",
-    minWidth: "110px",
-};
-
-const menuItemStyle: React.CSSProperties = {
-    border: "none",
-    background: "transparent",
-    color: "inherit",
-    textAlign: "left",
-    padding: "0.4rem 0.6rem",
-    cursor: "pointer",
-};
-
-const movePickerStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.4rem",
-    marginLeft: "0.5rem",
-};
-
-const smallButtonStyle: React.CSSProperties = {
-    border: "1px solid #444",
-    borderRadius: "4px",
-    background: "#1f1f1f",
-    color: "inherit",
-    cursor: "pointer",
-    padding: "0.15rem 0.5rem",
-    fontSize: "0.85rem",
-};
 
 function WorkspaceHomeContent() {
     const { workspaceId } = useParams<{ workspaceId: string }>();
@@ -129,21 +67,16 @@ function WorkspaceHomeContent() {
     const [creatingFolder, setCreatingFolder] = useState(false);
     const [creatingDoc, setCreatingDoc] = useState(false);
 
-    // Role gating — same pattern as the document editor page. Rename/Move/
-    // Archive are only offered to editors/owners; the backend's
-    // requireWorkspaceRole('editor') remains the real enforcement layer.
     const [workspaceRole, setWorkspaceRole] = useState<"owner" | "editor" | "viewer" | null>(null);
     const canEdit = workspaceRole === "owner" || workspaceRole === "editor";
 
-    // Kebab menu / rename / move state. Keyed by `${type}:${id}` so folders
-    // and documents share one set of state without id collisions.
     const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
     const [renamingKey, setRenamingKey] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
     const [movingKey, setMovingKey] = useState<string | null>(null);
     const [moveOptions, setMoveOptions] = useState<FolderTreeNode[] | null>(null);
     const [moveLoading, setMoveLoading] = useState(false);
-    const [moveTarget, setMoveTarget] = useState<string>(""); // "" = workspace root
+    const [moveTarget, setMoveTarget] = useState<string>("");
     const [actionPending, setActionPending] = useState<string | null>(null);
 
     useEffect(() => {
@@ -193,9 +126,6 @@ function WorkspaceHomeContent() {
         };
     }, [workspaceId, activeFolderId]);
 
-    // Closes the open kebab menu on any click outside it. Uses a data
-    // attribute + closest() instead of per-row refs — simplest option given
-    // menus are rendered dynamically per list item.
     useEffect(() => {
         function handleDocMouseDown(e: MouseEvent) {
             if (!openMenuKey) return;
@@ -371,7 +301,6 @@ function WorkspaceHomeContent() {
                     }}
                     onBlur={() => confirmRename(type, id)}
                     autoFocus
-                    style={{ padding: "0.2rem 0.4rem" }}
                 />
             );
         }
@@ -385,13 +314,14 @@ function WorkspaceHomeContent() {
 
         return (
             <span data-kebab-menu style={{ position: "relative", marginLeft: "0.5rem" }}>
-                <button onClick={() => toggleMenu(type, id)} style={kebabButtonStyle}>⋮</button>
+                <button onClick={() => toggleMenu(type, id)} style={{ padding: "0.15rem 0.5rem" }}>⋮</button>
                 {openMenuKey === key && (
-                    <div style={menuStyle}>
-                        <button style={menuItemStyle} onClick={() => startRename(type, id, label)}>Rename</button>
-                        <button style={menuItemStyle} onClick={() => openMovePicker(type, id)}>Move</button>
+                    <div style={{ position: "absolute", top: "1.9rem", left: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", minWidth: "120px", overflow: "hidden" }}>
+                        <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => startRename(type, id, label)}>Rename</button>
+                        <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => openMovePicker(type, id)}>Move</button>
                         <button
-                            style={menuItemStyle}
+                            className="btn-danger"
+                            style={{ border: "none", borderRadius: 0, textAlign: "left" }}
                             onClick={() => handleArchive(type, id, label)}
                             disabled={actionPending === key}
                         >
@@ -408,9 +338,9 @@ function WorkspaceHomeContent() {
         if (movingKey !== key) return null;
 
         return (
-            <div style={movePickerStyle}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "0.5rem" }}>
                 {moveLoading || !moveOptions ? (
-                    <span style={{ fontSize: "0.85rem", color: "#666" }}>Loading folders…</span>
+                    <span className="muted">Loading folders…</span>
                 ) : (
                     <>
                         <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}>
@@ -421,13 +351,12 @@ function WorkspaceHomeContent() {
                                 </option>
                             ))}
                         </select>
-                        <button onClick={() => confirmMove(type, id)} style={smallButtonStyle}>Confirm</button>
+                        <button className="btn-primary" onClick={() => confirmMove(type, id)}>Confirm</button>
                         <button
                             onClick={() => {
                                 setMovingKey(null);
                                 setMoveOptions(null);
                             }}
-                            style={smallButtonStyle}
                         >
                             Cancel
                         </button>
@@ -437,42 +366,15 @@ function WorkspaceHomeContent() {
         );
     }
 
-    if (loading) return <p>Loading workspace...</p>;
+    if (loading) return <p className="muted">Loading workspace…</p>;
 
     return (
-        <div>
+        <div style={{ maxWidth: "720px", margin: "0 auto", padding: "3rem 1.5rem" }}>
             <h1>Workspace</h1>
-            {error && <p style={{ color: "red" }}>{error}</p>}
-
-            <h2>Folders</h2>
-            {folders.length === 0 ? (
-                <p>No folders yet.</p>
-            ) : (
-                <ul>
-                    {folders.map((f) => (
-                        <li key={f.id} style={{ display: "flex", alignItems: "center", marginBottom: "0.25rem" }}>
-                            {renderNameOrInput("folder", f.id, f.name, `/workspaces/${workspaceId}?folderId=${f.id}`, "📁")}
-                            {renderActions("folder", f.id, f.name)}
-                            {renderMovePicker("folder", f.id)}
-                        </li>
-                    ))}
-                </ul>
-            )}
-            <form onSubmit={handleCreateFolder}>
-                <input
-                    type="text"
-                    placeholder="New Folder Name"
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    required
-                />
-                <button type="submit" disabled={creatingFolder}>
-                    {creatingFolder ? "Creating..." : "Create Folder"}
-                </button>
-            </form>
+            {error && <p className="error-text">{error}</p>}
 
             {activeFolderId && (
-                <p>
+                <p className="muted" style={{ marginBottom: "1rem" }}>
                     <a href={`/workspaces/${workspaceId}`}>Root</a>
                     {breadcrumbs.map((crumb, index) => {
                         const isCurrent = index === breadcrumbs.length - 1;
@@ -485,13 +387,52 @@ function WorkspaceHomeContent() {
                     })}
                 </p>
             )}
+
+            <h2>Folders</h2>
+            {folders.length === 0 ? (
+                <div className="card" style={{ marginBottom: "1rem" }}>
+                    <p style={{ margin: "0 0 0.25rem", fontWeight: 500 }}>No folders here yet</p>
+                    <p className="muted" style={{ margin: 0 }}>
+                        Folders keep related documents organized — create one below to get started.
+                    </p>
+                </div>
+            ) : (
+                <ul style={{ listStyle: "none", padding: 0, marginBottom: "0.75rem" }}>
+                    {folders.map((f) => (
+                        <li key={f.id} style={{ display: "flex", alignItems: "center", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
+                            {renderNameOrInput("folder", f.id, f.name, `/workspaces/${workspaceId}?folderId=${f.id}`, "📁")}
+                            {renderActions("folder", f.id, f.name)}
+                            {renderMovePicker("folder", f.id)}
+                        </li>
+                    ))}
+                </ul>
+            )}
+            <form onSubmit={handleCreateFolder} style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+                <input
+                    type="text"
+                    placeholder="New folder name"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    style={{ flex: 1 }}
+                    required
+                />
+                <button type="submit" className="btn-primary" disabled={creatingFolder}>
+                    {creatingFolder ? "Creating…" : "Create folder"}
+                </button>
+            </form>
+
             <h2>Documents</h2>
             {documents.length === 0 ? (
-                <p>No documents at root level yet.</p>
+                <div className="card" style={{ marginBottom: "1rem" }}>
+                    <p style={{ margin: "0 0 0.25rem", fontWeight: 500 }}>No documents here yet</p>
+                    <p className="muted" style={{ margin: 0 }}>
+                        This is where your notes live — create your first document below.
+                    </p>
+                </div>
             ) : (
-                <ul>
+                <ul style={{ listStyle: "none", padding: 0, marginBottom: "0.75rem" }}>
                     {documents.map((d) => (
-                        <li key={d.id} style={{ display: "flex", alignItems: "center", marginBottom: "0.25rem" }}>
+                        <li key={d.id} style={{ display: "flex", alignItems: "center", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
                             {renderNameOrInput("document", d.id, d.title, `/workspaces/${workspaceId}/documents/${d.id}`, "📄")}
                             {" "}{d.isPinned && "📌"}
                             {renderActions("document", d.id, d.title)}
@@ -501,15 +442,18 @@ function WorkspaceHomeContent() {
                 </ul>
             )}
 
-            <form onSubmit={handleCreateDocument}>
+            <form onSubmit={handleCreateDocument} style={{ display: "flex", gap: "0.5rem" }}>
                 <input
                     type="text"
-                    placeholder="New doument title"
+                    placeholder="New document title"
                     value={newDocTitle}
                     onChange={(e) => setNewDocTitle(e.target.value)}
+                    style={{ flex: 1 }}
                     required
                 />
-                <button type="submit" disabled={creatingDoc}>{creatingDoc ? "Creating..." : "Create document"}</button>
+                <button type="submit" className="btn-primary" disabled={creatingDoc}>
+                    {creatingDoc ? "Creating…" : "Create document"}
+                </button>
             </form>
         </div>
     );
