@@ -110,6 +110,13 @@ function DocumentEditorContent() {
     const [workspaceRole, setWorkspaceRole] = useState<'owner' | 'editor' | 'viewer' | null>(null);
     const canEdit = workspaceRole === 'owner' || workspaceRole === 'editor';
 
+    // Tracks the toolbar's own DOM node and the currently-selected image's
+    // DOM node, so the click-outside listener below can tell the difference
+    // between "click the toolbar/image" (ignore) and "click anywhere else"
+    // (close the toolbar).
+    const toolbarRef = useRef<HTMLDivElement | null>(null);
+    const selectedImageDomRef = useRef<HTMLElement | null>(null);
+    const selectedImageWrapperRef = useRef<HTMLElement | null>(null);
     const editor = useEditor({
         immediatelyRender: false,
         extensions: [
@@ -131,6 +138,7 @@ function DocumentEditorContent() {
     // selection wouldn't actually be changing.
     const clearImageSelection = useCallback(() => {
         setSelectedImage(null);
+        selectedImageWrapperRef.current = null; // renamed
         if (editor && !editor.isDestroyed) {
             editor.commands.setTextSelection(editor.state.selection.to);
         }
@@ -156,6 +164,7 @@ function DocumentEditorContent() {
                 if (dom && wrapperEl) {
                     const imgRect = dom.getBoundingClientRect();
                     const wrapperRect = wrapperEl.getBoundingClientRect();
+                    selectedImageWrapperRef.current = dom; // the NodeView wrapper, not just <img>
                     setSelectedImage({
                         src: selection.node.attrs.src,
                         top: imgRect.top - wrapperRect.top,
@@ -164,6 +173,7 @@ function DocumentEditorContent() {
                     return;
                 }
             }
+            selectedImageDomRef.current = null;
             setSelectedImage(null);
         }
 
@@ -298,20 +308,92 @@ function DocumentEditorContent() {
         return () => window.removeEventListener("beforeunload", handleBeforeUnload);
     }, []);
 
-    // Closes the image toolbar when clicking anywhere outside the editor
-    // (Tiptap's selectionUpdate only fires for selection changes *inside*
-    // the editor, so clicks on the sidebar/page background never reach it).
+    // Closes the image toolbar on any click that isn't on the toolbar itself
+    // or on the currently-selected image. This is the single source of truth
+    // for dismissal — it covers clicks outside the editor, clicks on empty
+    // space inside the editor, and clicks anywhere else on the page, all in
+    // one path, rather than relying on Tiptap's selectionUpdate event (which
+    // doesn't reliably fire for clicks on empty space that ProseMirror can't
+    // map to a new document position).
+    // Two-tier dismissal:
+    // 1. Click genuinely outside the image's NodeView wrapper (real text,
+    //    blank page) — dismiss normally, let the click proceed as usual.
+    // 2. Click inside the wrapper but outside the visible <img> itself (the
+    //    NodeView's invisible flex-alignment padding) — dismiss AND stop the
+    //    event from reaching ProseMirror's own handler. Without this,
+    //    ProseMirror treats any click on this contentEditable="false" node as
+    //    "select the image," reselecting it right after we just cleared it —
+    //    which is what caused the disappear-then-reappear flicker.
+    // Single source of truth for image-toolbar selection/dismissal. Runs on
+// EVERY mousedown inside the document (capture phase, before ProseMirror's
+// own handler), not just when an image is already selected — this is
+// necessary because tiptap-extension-resize-image's NodeView wrapper is
+// contentEditable="false", so ProseMirror selects the whole node on any
+// click inside that wrapper, including its invisible flex-alignment
+// padding on either side of the actual image. We derive the wrapper fresh
+// from the click target each time via closest(), rather than trusting
+// stale state, so this works correctly even on the very first click before
+// anything is selected.
     useEffect(() => {
-        function handleDocMouseDown(e: MouseEvent) {
-            if (!selectedImage) return;
-            const wrapperEl = editorWrapperRef.current;
-            if (wrapperEl && !wrapperEl.contains(e.target as Node)) {
+        if (!editor) return;
+        const editorDom = editor.view.dom as HTMLElement;
+
+        function closestEl(node: Node): HTMLElement | null {
+            return node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node.parentElement;
+        }
+
+        function handleMouseDownCapture(e: MouseEvent) {
+            const target = e.target as Node;
+            if (toolbarRef.current?.contains(target)) return; // let the button's onClick fire normally
+
+            const el = closestEl(target);
+            const wrapperEl = el?.closest('[contenteditable="false"][draggable="true"]') as HTMLElement | null;
+
+            if (wrapperEl && editorDom.contains(wrapperEl)) {
+                const imgEl = wrapperEl.querySelector('img') as HTMLElement | null;
+                const rect = imgEl?.getBoundingClientRect();
+                const PAD = 12;
+                const withinImage =
+                    !!rect &&
+                    e.clientX >= rect.left - PAD &&
+                    e.clientX <= rect.right + PAD &&
+                    e.clientY >= rect.top - PAD &&
+                    e.clientY <= rect.bottom + PAD;
+
+                if (withinImage) {
+                    if (wrapperEl === selectedImageWrapperRef.current) {
+                        // Same image, already selected — treat as a toggle-close
+                        // instead of letting ProseMirror just reselect the same node.
+                        e.preventDefault();
+                        e.stopPropagation();
+                        clearImageSelection();
+                    }
+                    // A different (not-yet-selected) image — let ProseMirror's
+                    // default behavior run so it actually selects this node,
+                    // which triggers handleSelectionUpdate normally.
+                    return;
+                }
+
+                // Click landed in the wrapper's dead-zone padding, not on the
+                // visible image itself — block ProseMirror from selecting the
+                // node at all, so no toolbar ever appears from this click.
+                e.preventDefault();
+                e.stopPropagation();
+                if (selectedImage) clearImageSelection();
+                return;
+            }
+
+            // Click is genuinely elsewhere (real text, blank editor space,
+            // outside the editor entirely) — dismiss if something's selected,
+            // otherwise do nothing and let the click proceed as normal.
+            if (selectedImage) {
                 clearImageSelection();
             }
         }
-        document.addEventListener('mousedown', handleDocMouseDown);
-        return () => document.removeEventListener('mousedown', handleDocMouseDown);
-    }, [selectedImage, clearImageSelection]);
+
+        document.addEventListener('mousedown', handleMouseDownCapture, true);
+        return () => document.removeEventListener('mousedown', handleMouseDownCapture, true);
+    }, [editor, selectedImage, clearImageSelection]);
 
     const saveTitle = useCallback(
         async (value: string) => {
@@ -472,16 +554,22 @@ function DocumentEditorContent() {
                 <div ref={editorWrapperRef} style={{ flex: 1, position: "relative" }}>
                     <EditorContent editor={editor} />
 
-                    {/* Floating toolbar over the selected embedded image */}
+                    {/* Floating toolbar, inset into the selected image's own
+                        top-left corner so it can never collide with
+                        surrounding text regardless of layout. Offset by 34px
+                        vertically to clear tiptap-extension-resize-image's
+                        own align-icon row, which renders directly above the
+                        image at selection time. */}
                     {selectedImage && (
                         <div
+                            ref={toolbarRef}
                             style={{
                                 position: "absolute",
-                                top: Math.max(selectedImage.top - 44, 0),
-                                left: selectedImage.left,
+                                top: selectedImage.top + 34,
+                                left: selectedImage.left + 6,
                                 display: "flex",
                                 gap: "0.25rem",
-                                background: "#111",
+                                background: "rgba(17, 17, 17, 0.9)",
                                 border: "1px solid #444",
                                 borderRadius: "4px",
                                 padding: "0.25rem",

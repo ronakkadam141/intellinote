@@ -39,7 +39,19 @@ async function handleTextAction(req, res, next) {
             success: true,
             data: { action, result },
         });
-    } catch (err) {
+    } 
+    
+    catch (err) {
+        if (err.code === 'AI_TIMEOUT') {
+            console.error('[aiController] handleTextAction — Gemini timeout:', err.stack || err);
+            return res.status(503).json({
+                success: false,
+                error: {
+                    code: 'AI_TIMEOUT',
+                    message: 'The AI is taking longer than usual to respond. Please try again.',
+                },
+            });
+        }
         if (err.code === 'AI_PROVIDER_ERROR') {
             console.error('[aiController] handleTextAction — AI provider error:', err.stack || err);
             return res.status(502).json({
@@ -81,7 +93,19 @@ async function handleImageAction(req, res, next) {
             success: true,
             data: { action, result },
         });
-    } catch (err) {
+    } 
+    
+    catch (err) {
+        if (err.code === 'AI_TIMEOUT') {
+            console.error('[aiController] handleTextAction — Gemini timeout:', err.stack || err);
+            return res.status(503).json({
+                success: false,
+                error: {
+                    code: 'AI_TIMEOUT',
+                    message: 'The AI is taking longer than usual to respond. Please try again.',
+                },
+            });
+        }
         if (err.code === 'AI_PROVIDER_ERROR') {
             console.error('[aiController] handleImageAction — AI provider error:', err.stack || err);
             return res.status(502).json({
