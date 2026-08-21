@@ -47,26 +47,6 @@ type ImageAction = typeof IMAGE_ACTIONS[number]['action'];
 type TitleStatus = "idle" | "saving" | "saved" | "error";
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
-// Minimal shared button styling — Tailwind preflight strips native button
-// chrome (border/background), which is why buttons were rendering as bare
-// text. Not a new stylesheet, just inline style objects.
-const actionButtonStyle: React.CSSProperties = {
-    padding: "0.4rem 0.6rem",
-    border: "1px solid #444",
-    borderRadius: "4px",
-    background: "#1f1f1f",
-    color: "inherit",
-    cursor: "pointer",
-    textAlign: "left",
-    width: "100%",
-};
-
-const primaryButtonStyle: React.CSSProperties = {
-    ...actionButtonStyle,
-    background: "#2563eb",
-    borderColor: "#2563eb",
-    color: "#fff",
-};
 
 function DocumentEditorContent() {
     const { workspaceId, documentId } = useParams<{ workspaceId: string; documentId: string }>();
@@ -532,21 +512,21 @@ function DocumentEditorContent() {
                 </a>
             </p>
 
-            {error && <p style={{ color: "red" }}>{error}</p>}
+            {error && <p className="error-text">{error}</p>}
 
             <div>
                 <input type="text" value={title} onChange={handleTitleChange} placeholder="Untitled" />
-                <button style={actionButtonStyle} onClick={handleManualSave} disabled={titleStatus === "saving"}>
+                <button onClick={handleManualSave} disabled={titleStatus === "saving"}>
                     {titleStatus === "saving" ? "Saving..." : "Save title"}
                 </button>
                 {titleStatus === "saved" && <span> Saved</span>}
-                {titleStatus === "error" && <span style={{ color: "red" }}> Failed to save</span>}
+                {titleStatus === "error" && <span className="error-text"> Failed to save</span>}
             </div>
 
             <p>
                 Live session: <strong>{connectionStatus}</strong>
                 {connectionStatus === "disconnected" && (
-                    <span style={{ color: "red" }}> — refresh the page to reconnect</span>
+                    <span className="error-text"> — refresh the page to reconnect</span>
                 )}
             </p>
 
@@ -569,8 +549,8 @@ function DocumentEditorContent() {
                                 left: selectedImage.left + 6,
                                 display: "flex",
                                 gap: "0.25rem",
-                                background: "rgba(17, 17, 17, 0.9)",
-                                border: "1px solid #444",
+                                background: "var(--surface-2)",
+                                border: "1px solid var(--border)",
                                 borderRadius: "4px",
                                 padding: "0.25rem",
                                 zIndex: 10,
@@ -581,12 +561,8 @@ function DocumentEditorContent() {
                                     key={action}
                                     onClick={() => handleImageAction(action)}
                                     disabled={isProcessingImage}
-                                    style={{
-                                        ...primaryButtonStyle,
-                                        width: "auto",
-                                        padding: "0.3rem 0.5rem",
-                                        fontSize: "0.75rem",
-                                    }}
+                                    className="btn-primary"
+                                    style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
                                     title={label}
                                 >
                                     {isProcessingImage && activeImageAction === action ? "…" : label}
@@ -600,7 +576,8 @@ function DocumentEditorContent() {
                     style={{
                         width: "280px",
                         flexShrink: 0,
-                        border: "1px solid #ccc",
+                        border: "1px solid var(--border)",
+                        background: "var(--surface)",
                         borderRadius: "6px",
                         padding: "1rem",
                         position: "sticky",
@@ -619,9 +596,11 @@ function DocumentEditorContent() {
                         {TEXT_ACTIONS.map(({ action, label }) => (
                             <button
                                 key={action}
-                                style={actionButtonStyle}
                                 onClick={() => handleTextAction(action)}
-                                disabled={!selectedText.trim() || isProcessing}
+                                disabled={isProcessingImage}
+                                className="btn-primary"
+                                style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
+                                title={label}
                             >
                                 {isProcessing && activeAction === action ? `${label}…` : label}
                             </button>
@@ -638,17 +617,17 @@ function DocumentEditorContent() {
                                 style={{ display: 'none' }}
                             />
                             <button
-                                style={actionButtonStyle}
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploadingImage}
+                                className="btn-primary"
                             >
                                 {isUploadingImage ? 'Uploading...' : 'Insert Image'}
                             </button>
-                            {uploadError && <p style={{ color: 'red' }}>{uploadError}</p>}
+                            {uploadError && <p className="error-text">{uploadError}</p>}
                         </div>
                     )}
 
-                    {actionError && <p style={{ color: "red" }}>{actionError}</p>}
+                    {actionError && <p className="error-text">{actionError}</p>}
 
                     {actionResult && activeAction && (
                         <div style={{ marginTop: "1rem" }}>
@@ -660,7 +639,7 @@ function DocumentEditorContent() {
                     )}
 
                     {/* Image action result, same pattern as text result above */}
-                    {imageActionError && <p style={{ color: "red" }}>{imageActionError}</p>}
+                    {imageActionError && <p className="error-text">{imageActionError}</p>}
 
                     {isProcessingImage && activeImageAction && (
                         <div style={{ marginTop: "1rem" }}>
@@ -684,7 +663,6 @@ function DocumentEditorContent() {
         </div>
     );
 }
-
 export default function DocumentEditorPage() {
     return (
         <RequireAuth>
