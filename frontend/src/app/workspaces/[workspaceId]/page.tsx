@@ -6,6 +6,7 @@ import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
 import type { DocumentSummary } from "@/types/document";
 import type { Folder } from "@/types/folder";
+import Link from "next/link";
 
 interface Crumb {
     id: string;
@@ -370,6 +371,9 @@ function WorkspaceHomeContent() {
 
     return (
         <div style={{ maxWidth: "720px", margin: "0 auto", padding: "3rem 1.5rem" }}>
+            <p className="muted" style={{ marginBottom: "0.5rem" }}>
+                <Link href="/workspaces">← All workspaces</Link>
+            </p>
             <h1>Workspace</h1>
             {error && <p className="error-text">{error}</p>}
 
