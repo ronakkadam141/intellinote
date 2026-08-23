@@ -11,6 +11,7 @@ import { WebsocketProvider } from "y-websocket";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
 import ResizableImage from 'tiptap-extension-resize-image';
+import Link from "next/link";
 
 interface DocumentDetail {
     id: string;
@@ -504,12 +505,12 @@ function DocumentEditorContent() {
 
     if (loading) return <p>Loading document...</p>;
 
-    return (
+        return (
         <div>
             <p>
-                <a href={`/workspaces/${workspaceId}${folderId ? `?folderId=${folderId}` : ""}`}>
+                <Link href={`/workspaces/${workspaceId}${folderId ? `?folderId=${folderId}` : ""}`}>
                     ← Back to workspace
-                </a>
+                </Link>
             </p>
 
             {error && <p className="error-text">{error}</p>}
@@ -587,7 +588,7 @@ function DocumentEditorContent() {
                     <h3 style={{ marginTop: 0 }}>AI Actions</h3>
 
                     {!selectedText.trim() && !selectedImage && (
-                        <p style={{ fontSize: "0.85rem", color: "#666" }}>
+                        <p className="muted">
                             Select text, or click an image, to see AI actions.
                         </p>
                     )}
@@ -597,10 +598,9 @@ function DocumentEditorContent() {
                             <button
                                 key={action}
                                 onClick={() => handleTextAction(action)}
-                                disabled={isProcessingImage}
+                                disabled={!selectedText.trim() || isProcessing}
                                 className="btn-primary"
-                                style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
-                                title={label}
+                                style={{ width: "100%" }}
                             >
                                 {isProcessing && activeAction === action ? `${label}…` : label}
                             </button>
@@ -620,6 +620,7 @@ function DocumentEditorContent() {
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isUploadingImage}
                                 className="btn-primary"
+                                style={{ width: "100%" }}
                             >
                                 {isUploadingImage ? 'Uploading...' : 'Insert Image'}
                             </button>
@@ -646,7 +647,7 @@ function DocumentEditorContent() {
                             <strong>
                                 {IMAGE_ACTIONS.find((a) => a.action === activeImageAction)?.label} result:
                             </strong>
-                            <p style={{ color: "#888" }}>Performing action…</p>
+                            <p className="muted">Performing action…</p>
                         </div>
                     )}
 
