@@ -30,9 +30,9 @@ export default function LoginPage() {
     }
 
     return (
-        <div style={{ maxWidth: "360px", margin: "4rem auto", padding: "0 1.5rem" }}>
-            <h1>Log in</h1>
-            <form onSubmit={handleSubmit} className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        <div style={{ maxWidth: "360px", margin: "5rem auto", padding: "0 1.5rem" }}>
+            <h1 style={{ marginBottom: "1.5rem" }}>Log in</h1>
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 <div>
                     <label htmlFor="email">Email</label>
                     <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: "100%" }} required />
@@ -50,7 +50,7 @@ export default function LoginPage() {
                 </button>
             </form>
 
-            <p className="muted" style={{ marginTop: "1rem" }}>
+            <p className="muted" style={{ marginTop: "1.5rem" }}>
                 No account? <a href="/register">Register</a>
             </p>
         </div>

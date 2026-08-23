@@ -288,7 +288,7 @@ function WorkspaceHomeContent() {
         }
     }
 
-    function renderNameOrInput(type: ItemType, id: string, label: string, href: string, icon: string) {
+    function renderNameOrInput(type: ItemType, id: string, label: string, href: string) {
         const key = keyFor(type, id);
         if (renamingKey === key) {
             return (
@@ -305,7 +305,7 @@ function WorkspaceHomeContent() {
                 />
             );
         }
-        return <a href={href}>{icon} {label}</a>;
+        return <a href={href}>{label}</a>;
     }
 
     function renderActions(type: ItemType, id: string, label: string) {
@@ -315,9 +315,9 @@ function WorkspaceHomeContent() {
 
         return (
             <span data-kebab-menu style={{ position: "relative", marginLeft: "0.5rem" }}>
-                <button onClick={() => toggleMenu(type, id)} style={{ padding: "0.15rem 0.5rem" }}>⋮</button>
+                <button onClick={() => toggleMenu(type, id)} style={{ padding: "0.15rem 0.5rem", border: "none" }}>⋮</button>
                 {openMenuKey === key && (
-                    <div style={{ position: "absolute", top: "1.9rem", left: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", minWidth: "120px", overflow: "hidden" }}>
+                    <div style={{ position: "absolute", top: "1.9rem", right: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", minWidth: "120px", overflow: "hidden" }}>
                         <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => startRename(type, id, label)}>Rename</button>
                         <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => openMovePicker(type, id)}>Move</button>
                         <button
@@ -370,15 +370,16 @@ function WorkspaceHomeContent() {
     if (loading) return <p className="muted">Loading workspace…</p>;
 
     return (
-        <div style={{ maxWidth: "720px", margin: "0 auto", padding: "3rem 1.5rem" }}>
+        <div style={{ maxWidth: "680px", margin: "0 auto", padding: "3.5rem 1.5rem" }}>
             <p className="muted" style={{ marginBottom: "0.5rem" }}>
                 <Link href="/workspaces">← All workspaces</Link>
             </p>
+
             <h1>Workspace</h1>
             {error && <p className="error-text">{error}</p>}
 
             {activeFolderId && (
-                <p className="muted" style={{ marginBottom: "1rem" }}>
+                <p className="muted" style={{ marginTop: "0.5rem" }}>
                     <a href={`/workspaces/${workspaceId}`}>Root</a>
                     {breadcrumbs.map((crumb, index) => {
                         const isCurrent = index === breadcrumbs.length - 1;
@@ -392,26 +393,30 @@ function WorkspaceHomeContent() {
                 </p>
             )}
 
-            <h2>Folders</h2>
+            <p className="section-label">Folders</p>
             {folders.length === 0 ? (
-                <div className="card" style={{ marginBottom: "1rem" }}>
-                    <p style={{ margin: "0 0 0.25rem", fontWeight: 500 }}>No folders here yet</p>
+                <div className="callout">
+                    <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "15px" }}>No folders here yet</p>
                     <p className="muted" style={{ margin: 0 }}>
                         Folders keep related documents organized — create one below to get started.
                     </p>
                 </div>
             ) : (
-                <ul style={{ listStyle: "none", padding: 0, marginBottom: "0.75rem" }}>
+                <div>
                     {folders.map((f) => (
-                        <li key={f.id} style={{ display: "flex", alignItems: "center", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
-                            {renderNameOrInput("folder", f.id, f.name, `/workspaces/${workspaceId}?folderId=${f.id}`, "📁")}
-                            {renderActions("folder", f.id, f.name)}
-                            {renderMovePicker("folder", f.id)}
-                        </li>
+                        <div key={f.id} className="row">
+                            <span style={{ display: "flex", alignItems: "center" }}>
+                                {renderNameOrInput("folder", f.id, f.name, `/workspaces/${workspaceId}?folderId=${f.id}`)}
+                            </span>
+                            <span style={{ display: "flex", alignItems: "center" }}>
+                                {renderMovePicker("folder", f.id)}
+                                {renderActions("folder", f.id, f.name)}
+                            </span>
+                        </div>
                     ))}
-                </ul>
+                </div>
             )}
-            <form onSubmit={handleCreateFolder} style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+            <form onSubmit={handleCreateFolder} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
                 <input
                     type="text"
                     placeholder="New folder name"
@@ -425,28 +430,32 @@ function WorkspaceHomeContent() {
                 </button>
             </form>
 
-            <h2>Documents</h2>
+            <p className="section-label">Documents</p>
             {documents.length === 0 ? (
-                <div className="card" style={{ marginBottom: "1rem" }}>
-                    <p style={{ margin: "0 0 0.25rem", fontWeight: 500 }}>No documents here yet</p>
+                <div className="callout">
+                    <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "15px" }}>No documents here yet</p>
                     <p className="muted" style={{ margin: 0 }}>
                         This is where your notes live — create your first document below.
                     </p>
                 </div>
             ) : (
-                <ul style={{ listStyle: "none", padding: 0, marginBottom: "0.75rem" }}>
+                <div>
                     {documents.map((d) => (
-                        <li key={d.id} style={{ display: "flex", alignItems: "center", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }}>
-                            {renderNameOrInput("document", d.id, d.title, `/workspaces/${workspaceId}/documents/${d.id}`, "📄")}
-                            {" "}{d.isPinned && "📌"}
-                            {renderActions("document", d.id, d.title)}
-                            {renderMovePicker("document", d.id)}
-                        </li>
+                        <div key={d.id} className="row">
+                            <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                                {renderNameOrInput("document", d.id, d.title, `/workspaces/${workspaceId}/documents/${d.id}`)}
+                                {d.isPinned && <span className="muted" style={{ fontSize: "11px" }}>pinned</span>}
+                            </span>
+                            <span style={{ display: "flex", alignItems: "center" }}>
+                                {renderMovePicker("document", d.id)}
+                                {renderActions("document", d.id, d.title)}
+                            </span>
+                        </div>
                     ))}
-                </ul>
+                </div>
             )}
 
-            <form onSubmit={handleCreateDocument} style={{ display: "flex", gap: "0.5rem" }}>
+            <form onSubmit={handleCreateDocument} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
                 <input
                     type="text"
                     placeholder="New document title"

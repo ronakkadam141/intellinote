@@ -31,9 +31,9 @@ export default function RegisterPage() {
     }
 
     return (
-        <div style={{ maxWidth: "360px", margin: "4rem auto", padding: "0 1.5rem" }}>
-            <h1>Create an account</h1>
-            <form onSubmit={handleSubmit} className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        <div style={{ maxWidth: "360px", margin: "5rem auto", padding: "0 1.5rem" }}>
+            <h1 style={{ marginBottom: "1.5rem" }}>Create an account</h1>
+            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 <div>
                     <label htmlFor="displayName">Name (optional)</label>
                     <input id="displayName" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ width: "100%" }} />
@@ -56,7 +56,7 @@ export default function RegisterPage() {
                 </button>
             </form>
 
-            <p className="muted" style={{ marginTop: "1rem" }}>
+            <p className="muted" style={{ marginTop: "1.5rem" }}>
                 Already have an account? <a href="/login">Log in</a>
             </p>
         </div>
