@@ -59,30 +59,30 @@ function WorkspaceContent() {
     if (loading) return <p className="muted">Loading workspaces…</p>;
 
     return (
-        <div style={{ maxWidth: "560px", margin: "0 auto", padding: "3rem 1.5rem" }}>
+        <div style={{ maxWidth: "540px", margin: "0 auto", padding: "3.5rem 1.5rem" }}>
             <h1>Your workspaces</h1>
 
             {error && <p className="error-text">{error}</p>}
 
             {workspaces.length === 0 ? (
-                <div className="card" style={{ marginBottom: "1.5rem" }}>
-                    <p style={{ margin: "0 0 0.5rem", fontWeight: 500 }}>Start your first workspace</p>
+                <div className="callout" style={{ marginTop: "1.5rem" }}>
+                    <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "16px" }}>Start your first workspace</p>
                     <p className="muted" style={{ margin: 0 }}>
                         A workspace holds your folders, documents, and collaborators for one project or team.
                     </p>
                 </div>
             ) : (
-                <ul style={{ listStyle: "none", padding: 0, marginBottom: "1.5rem" }}>
+                <div>
                     {workspaces.map((ws) => (
-                        <li key={ws.id} className="card" style={{ marginBottom: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <a href={`/workspaces/${ws.id}`} style={{ fontWeight: 500 }}>{ws.name}</a>
+                        <div key={ws.id} className="row">
+                            <a href={`/workspaces/${ws.id}`}>{ws.name}</a>
                             <span className="muted">{ws.role}</span>
-                        </li>
+                        </div>
                     ))}
-                </ul>
+                </div>
             )}
 
-            <h2>Create a workspace</h2>
+            <p className="section-label">Create a workspace</p>
 
             <form onSubmit={handleCreate} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 <div>
