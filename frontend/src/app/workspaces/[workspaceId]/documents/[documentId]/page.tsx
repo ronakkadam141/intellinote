@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, ChangeEvent } from "react";
+import { useEffect, useRef, useState, useCallback, ChangeEvent, DragEvent } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
@@ -11,7 +12,6 @@ import { WebsocketProvider } from "y-websocket";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
 import ResizableImage from 'tiptap-extension-resize-image';
-import Link from "next/link";
 
 interface DocumentDetail {
     id: string;
@@ -35,7 +35,6 @@ const TEXT_ACTIONS = [
 
 type TextAction = typeof TEXT_ACTIONS[number]['action'];
 
-// Mirrors TEXT_ACTIONS. Values must match backend VALID_IMAGE_ACTIONS exactly.
 const IMAGE_ACTIONS = [
   { action: 'explainDiagram', label: 'Explain Diagram' },
   { action: 'summarizeImage', label: 'Summarize Image' },
@@ -48,6 +47,30 @@ type ImageAction = typeof IMAGE_ACTIONS[number]['action'];
 type TitleStatus = "idle" | "saving" | "saved" | "error";
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
+// One tab per AI action run, whether text or image. Replaces the old
+// separate text/image result state entirely — a single unified model is
+// what makes "new action replaces the old one" and "tabbed results" fall
+// out naturally, instead of fighting two parallel state groups.
+type AiTabKind = 'text' | 'image';
+
+interface AiResultTab {
+    id: string;
+    kind: AiTabKind;
+    label: string;
+    status: 'loading' | 'done' | 'error';
+    result: string | null;
+    error: string | null;
+}
+
+function extractErrorMessage(err: unknown): string {
+    if (err instanceof ApiError && err.status === 429) {
+        return 'Too many AI requests — please wait a few minutes and try again.';
+    }
+    if (err instanceof ApiError && err.code === 'AI_TIMEOUT') {
+        return 'The AI is taking longer than usual — please try again.';
+    }
+    return 'AI action failed. Please try again.';
+}
 
 function DocumentEditorContent() {
     const { workspaceId, documentId } = useParams<{ workspaceId: string; documentId: string }>();
@@ -68,36 +91,31 @@ function DocumentEditorContent() {
 
     const [selectedText, setSelectedText] = useState("");
 
-    const [activeAction, setActiveAction] = useState<TextAction | null>(null);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [actionResult, setActionResult] = useState<string | null>(null);
-    const [actionError, setActionError] = useState<string | null>(null);
+    // AI result tabs — replaces activeAction/isProcessing/actionResult/
+    // actionError and activeImageAction/isProcessingImage/imageActionResult/
+    // imageActionError entirely.
+    const [tabs, setTabs] = useState<AiResultTab[]>([]);
+    const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    // Validation message ("select some text first") isn't a real AI result,
+    // so it doesn't get a tab — it's a lightweight transient message shown
+    // above the tab strip instead.
+    const [formError, setFormError] = useState<string | null>(null);
+    const draggedTabIdRef = useRef<string | null>(null);
 
-    // Image-selection + image-action state, same shape as text actions.
     const [selectedImage, setSelectedImage] = useState<{ src: string; top: number; left: number } | null>(null);
-    const [activeImageAction, setActiveImageAction] = useState<ImageAction | null>(null);
-    const [isProcessingImage, setIsProcessingImage] = useState(false);
-    const [imageActionResult, setImageActionResult] = useState<string | null>(null);
-    const [imageActionError, setImageActionError] = useState<string | null>(null);
 
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-    // Wraps EditorContent so the floating toolbar can be positioned
-    // relative to it instead of the viewport.
     const editorWrapperRef = useRef<HTMLDivElement | null>(null);
 
     const [workspaceRole, setWorkspaceRole] = useState<'owner' | 'editor' | 'viewer' | null>(null);
     const canEdit = workspaceRole === 'owner' || workspaceRole === 'editor';
 
-    // Tracks the toolbar's own DOM node and the currently-selected image's
-    // DOM node, so the click-outside listener below can tell the difference
-    // between "click the toolbar/image" (ignore) and "click anywhere else"
-    // (close the toolbar).
     const toolbarRef = useRef<HTMLDivElement | null>(null);
-    const selectedImageDomRef = useRef<HTMLElement | null>(null);
     const selectedImageWrapperRef = useRef<HTMLElement | null>(null);
+
     const editor = useEditor({
         immediatelyRender: false,
         extensions: [
@@ -112,14 +130,9 @@ function DocumentEditorContent() {
         },
     });
 
-    // Clears our toolbar state AND actually moves Tiptap's selection off the
-    // image node. Without this, ProseMirror still considers the image
-    // "selected" (leaving its highlight box up), and clicking the same
-    // image again wouldn't fire a new selectionUpdate event since the
-    // selection wouldn't actually be changing.
     const clearImageSelection = useCallback(() => {
         setSelectedImage(null);
-        selectedImageWrapperRef.current = null; // renamed
+        selectedImageWrapperRef.current = null;
         if (editor && !editor.isDestroyed) {
             editor.commands.setTextSelection(editor.state.selection.to);
         }
@@ -134,18 +147,13 @@ function DocumentEditorContent() {
             const { from, to } = selection;
             setSelectedText(activeEditor.state.doc.textBetween(from, to, " "));
 
-            // Detect an image node selection and compute toolbar position.
-            // tiptap-extension-resize-image registers its node under the name
-            // "imageResize" in most versions; matching case-insensitively on
-            // "image" covers that and the plain @tiptap/extension-image name
-            // without hardcoding a version-specific string.
             if (selection instanceof NodeSelection && /image/i.test(selection.node.type.name)) {
                 const dom = activeEditor.view.nodeDOM(selection.from) as HTMLElement | null;
                 const wrapperEl = editorWrapperRef.current;
                 if (dom && wrapperEl) {
                     const imgRect = dom.getBoundingClientRect();
                     const wrapperRect = wrapperEl.getBoundingClientRect();
-                    selectedImageWrapperRef.current = dom; // the NodeView wrapper, not just <img>
+                    selectedImageWrapperRef.current = dom;
                     setSelectedImage({
                         src: selection.node.attrs.src,
                         top: imgRect.top - wrapperRect.top,
@@ -154,7 +162,7 @@ function DocumentEditorContent() {
                     return;
                 }
             }
-            selectedImageDomRef.current = null;
+            selectedImageWrapperRef.current = null;
             setSelectedImage(null);
         }
 
@@ -289,32 +297,6 @@ function DocumentEditorContent() {
         return () => window.removeEventListener("beforeunload", handleBeforeUnload);
     }, []);
 
-    // Closes the image toolbar on any click that isn't on the toolbar itself
-    // or on the currently-selected image. This is the single source of truth
-    // for dismissal — it covers clicks outside the editor, clicks on empty
-    // space inside the editor, and clicks anywhere else on the page, all in
-    // one path, rather than relying on Tiptap's selectionUpdate event (which
-    // doesn't reliably fire for clicks on empty space that ProseMirror can't
-    // map to a new document position).
-    // Two-tier dismissal:
-    // 1. Click genuinely outside the image's NodeView wrapper (real text,
-    //    blank page) — dismiss normally, let the click proceed as usual.
-    // 2. Click inside the wrapper but outside the visible <img> itself (the
-    //    NodeView's invisible flex-alignment padding) — dismiss AND stop the
-    //    event from reaching ProseMirror's own handler. Without this,
-    //    ProseMirror treats any click on this contentEditable="false" node as
-    //    "select the image," reselecting it right after we just cleared it —
-    //    which is what caused the disappear-then-reappear flicker.
-    // Single source of truth for image-toolbar selection/dismissal. Runs on
-// EVERY mousedown inside the document (capture phase, before ProseMirror's
-// own handler), not just when an image is already selected — this is
-// necessary because tiptap-extension-resize-image's NodeView wrapper is
-// contentEditable="false", so ProseMirror selects the whole node on any
-// click inside that wrapper, including its invisible flex-alignment
-// padding on either side of the actual image. We derive the wrapper fresh
-// from the click target each time via closest(), rather than trusting
-// stale state, so this works correctly even on the very first click before
-// anything is selected.
     useEffect(() => {
         if (!editor) return;
         const editorDom = editor.view.dom as HTMLElement;
@@ -325,7 +307,7 @@ function DocumentEditorContent() {
 
         function handleMouseDownCapture(e: MouseEvent) {
             const target = e.target as Node;
-            if (toolbarRef.current?.contains(target)) return; // let the button's onClick fire normally
+            if (toolbarRef.current?.contains(target)) return;
 
             const el = closestEl(target);
             const wrapperEl = el?.closest('[contenteditable="false"][draggable="true"]') as HTMLElement | null;
@@ -343,30 +325,19 @@ function DocumentEditorContent() {
 
                 if (withinImage) {
                     if (wrapperEl === selectedImageWrapperRef.current) {
-                        // Same image, already selected — treat as a toggle-close
-                        // instead of letting ProseMirror just reselect the same node.
                         e.preventDefault();
                         e.stopPropagation();
                         clearImageSelection();
                     }
-                    // A different (not-yet-selected) image — let ProseMirror's
-                    // default behavior run so it actually selects this node,
-                    // which triggers handleSelectionUpdate normally.
                     return;
                 }
 
-                // Click landed in the wrapper's dead-zone padding, not on the
-                // visible image itself — block ProseMirror from selecting the
-                // node at all, so no toolbar ever appears from this click.
                 e.preventDefault();
                 e.stopPropagation();
                 if (selectedImage) clearImageSelection();
                 return;
             }
 
-            // Click is genuinely elsewhere (real text, blank editor space,
-            // outside the editor entirely) — dismiss if something's selected,
-            // otherwise do nothing and let the click proceed as normal.
             if (selectedImage) {
                 clearImageSelection();
             }
@@ -437,65 +408,95 @@ function DocumentEditorContent() {
         saveTitle(title);
     }
 
+    // Creates a new tab immediately (status 'loading') and makes it active,
+    // then fills it in on response. Every call — text or image — produces
+    // its own independent tab; nothing here blocks other actions from
+    // running concurrently.
     const handleTextAction = async (action: TextAction) => {
         if (!selectedText.trim()) {
-            setActionError('Select some text first.');
+            setFormError('Select some text first.');
             return;
         }
+        setFormError(null);
 
-        setActiveAction(action);
-        setIsProcessing(true);
-        setActionError(null);
-        setActionResult(null);
+        const tabId = crypto.randomUUID();
+        const label = TEXT_ACTIONS.find((a) => a.action === action)?.label ?? action;
+        setTabs((prev) => [...prev, { id: tabId, kind: 'text', label, status: 'loading', result: null, error: null }]);
+        setActiveTabId(tabId);
 
         try {
             const response = await apiClient.post<{ action: string; result: string }>(
                 `/api/workspaces/${workspaceId}/documents/${documentId}/ai/text`,
                 { action, text: selectedText }
             );
-            setActionResult(response.result);
+            setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: 'done', result: response.result } : t)));
         } catch (err) {
-            if (err instanceof ApiError && err.status === 429) {
-                setActionError('Too many AI requests — please wait a few minutes and try again.');
-            } else if (err instanceof ApiError && err.code === 'AI_TIMEOUT') {
-                setActionError('The AI is taking longer than usual — please try again.');
-            } else {
-                setActionError('AI action failed. Please try again.');
-            }
-        } finally {
-            setIsProcessing(false);
+            const message = extractErrorMessage(err);
+            setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: 'error', error: message } : t)));
         }
     };
 
-    // Same shape as handleTextAction, hits the image endpoint instead.
     const handleImageAction = async (action: ImageAction) => {
         if (!selectedImage) return;
-        const imageUrl = selectedImage.src; // capture before clearing state below
+        const imageUrl = selectedImage.src;
+        clearImageSelection();
 
-        setActiveImageAction(action);
-        setIsProcessingImage(true);
-        setImageActionError(null);
-        setImageActionResult(null);
-        clearImageSelection(); // hide toolbar + deselect image immediately on click
+        const tabId = crypto.randomUUID();
+        const label = IMAGE_ACTIONS.find((a) => a.action === action)?.label ?? action;
+        setTabs((prev) => [...prev, { id: tabId, kind: 'image', label, status: 'loading', result: null, error: null }]);
+        setActiveTabId(tabId);
 
         try {
             const response = await apiClient.post<{ action: string; result: string }>(
                 `/api/workspaces/${workspaceId}/documents/${documentId}/ai/image`,
                 { action, imageUrl }
             );
-            setImageActionResult(response.result);
+            setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: 'done', result: response.result } : t)));
         } catch (err) {
-            if (err instanceof ApiError && err.status === 429) {
-                setImageActionError('Too many AI requests — please wait a few minutes and try again.');
-            } else if (err instanceof ApiError && err.code === 'AI_TIMEOUT') {
-                setImageActionError('The AI is taking longer than usual — please try again.');
-            } else {
-                setImageActionError('AI action failed. Please try again.');
-            }
-        } finally {
-            setIsProcessingImage(false);
+            const message = extractErrorMessage(err);
+            setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: 'error', error: message } : t)));
         }
     };
+
+    // Closing a tab activates its former neighbor (whatever's now at the
+    // same index, or the previous one if it was last) — same convention
+    // browsers use, so focus doesn't jump unpredictably.
+    function closeTab(id: string) {
+        setTabs((prev) => {
+            const idx = prev.findIndex((t) => t.id === id);
+            const next = prev.filter((t) => t.id !== id);
+            if (activeTabId === id) {
+                const fallback = next[idx] ?? next[idx - 1] ?? null;
+                setActiveTabId(fallback ? fallback.id : null);
+            }
+            return next;
+        });
+    }
+
+    // Native HTML5 drag and drop for reordering — no library needed for
+    // this scale. dragStart records the source tab id in a ref (simpler
+    // than reading dataTransfer, which has cross-browser quirks for
+    // same-page reordering); drop splices it to the target's position.
+    function handleTabDragStart(id: string) {
+        draggedTabIdRef.current = id;
+    }
+    function handleTabDragOver(e: DragEvent) {
+        e.preventDefault();
+    }
+    function handleTabDrop(targetId: string) {
+        const sourceId = draggedTabIdRef.current;
+        draggedTabIdRef.current = null;
+        if (!sourceId || sourceId === targetId) return;
+        setTabs((prev) => {
+            const sourceIdx = prev.findIndex((t) => t.id === sourceId);
+            const targetIdx = prev.findIndex((t) => t.id === targetId);
+            if (sourceIdx === -1 || targetIdx === -1) return prev;
+            const next = [...prev];
+            const [moved] = next.splice(sourceIdx, 1);
+            next.splice(targetIdx, 0, moved);
+            return next;
+        });
+    }
 
     useEffect(() => {
         return () => {
@@ -505,165 +506,186 @@ function DocumentEditorContent() {
 
     if (loading) return <p>Loading document...</p>;
 
-        return (
+    const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+
+    
+    return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+        <p>
+            <Link href={`/workspaces/${workspaceId}${folderId ? `?folderId=${folderId}` : ""}`}>
+                ← Back to workspace
+            </Link>
+        </p>
+
+        {error && <p className="error-text">{error}</p>}
+
         <div>
-            <p>
-                <Link href={`/workspaces/${workspaceId}${folderId ? `?folderId=${folderId}` : ""}`}>
-                    ← Back to workspace
-                </Link>
-            </p>
+            <input type="text" value={title} onChange={handleTitleChange} placeholder="Untitled" />
+            <button onClick={handleManualSave} disabled={titleStatus === "saving"}>
+                {titleStatus === "saving" ? "Saving..." : "Save title"}
+            </button>
+            {titleStatus === "saved" && <span> Saved</span>}
+            {titleStatus === "error" && <span className="error-text"> Failed to save</span>}
+        </div>
 
-            {error && <p className="error-text">{error}</p>}
+        <p>
+            Live session: <strong>{connectionStatus}</strong>
+            {connectionStatus === "disconnected" && (
+                <span className="error-text"> — refresh the page to reconnect</span>
+            )}
+        </p>
 
-            <div>
-                <input type="text" value={title} onChange={handleTitleChange} placeholder="Untitled" />
-                <button onClick={handleManualSave} disabled={titleStatus === "saving"}>
-                    {titleStatus === "saving" ? "Saving..." : "Save title"}
-                </button>
-                {titleStatus === "saved" && <span> Saved</span>}
-                {titleStatus === "error" && <span className="error-text"> Failed to save</span>}
-            </div>
+        <div style={{ display: "flex", gap: "1rem", alignItems: "stretch", flex: 1, minHeight: 0 }}>
+            <div ref={editorWrapperRef} style={{ flex: 1, position: "relative", overflowY: "auto" }}>
+                <EditorContent editor={editor} />
 
-            <p>
-                Live session: <strong>{connectionStatus}</strong>
-                {connectionStatus === "disconnected" && (
-                    <span className="error-text"> — refresh the page to reconnect</span>
-                )}
-            </p>
-
-            <div style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-                <div ref={editorWrapperRef} style={{ flex: 1, position: "relative" }}>
-                    <EditorContent editor={editor} />
-
-                    {/* Floating toolbar, inset into the selected image's own
-                        top-left corner so it can never collide with
-                        surrounding text regardless of layout. Offset by 34px
-                        vertically to clear tiptap-extension-resize-image's
-                        own align-icon row, which renders directly above the
-                        image at selection time. */}
-                    {selectedImage && (
-                        <div
-                            ref={toolbarRef}
-                            style={{
-                                position: "absolute",
-                                top: selectedImage.top + 34,
-                                left: selectedImage.left + 6,
-                                display: "flex",
-                                gap: "0.25rem",
-                                background: "var(--surface-2)",
-                                border: "1px solid var(--border)",
-                                borderRadius: "4px",
-                                padding: "0.25rem",
-                                zIndex: 10,
-                            }}
-                        >
-                            {IMAGE_ACTIONS.map(({ action, label }) => (
-                                <button
-                                    key={action}
-                                    onClick={() => handleImageAction(action)}
-                                    disabled={isProcessingImage}
-                                    className="btn-primary"
-                                    style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
-                                    title={label}
-                                >
-                                    {isProcessingImage && activeImageAction === action ? "…" : label}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                <aside
-                    style={{
-                        width: "280px",
-                        flexShrink: 0,
-                        border: "1px solid var(--border)",
-                        background: "var(--surface)",
-                        borderRadius: "6px",
-                        padding: "1rem",
-                        position: "sticky",
-                        top: "1rem",
-                    }}
-                >
-                    <h3 style={{ marginTop: 0 }}>AI Actions</h3>
-
-                    {!selectedText.trim() && !selectedImage && (
-                        <p className="muted">
-                            Select text, or click an image, to see AI actions.
-                        </p>
-                    )}
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                        {TEXT_ACTIONS.map(({ action, label }) => (
+                {selectedImage && (
+                    <div
+                        ref={toolbarRef}
+                        style={{
+                            position: "absolute",
+                            top: selectedImage.top + 34,
+                            left: selectedImage.left + 6,
+                            display: "flex",
+                            gap: "0.25rem",
+                            background: "var(--surface-2)",
+                            border: "1px solid var(--border)",
+                            borderRadius: "4px",
+                            padding: "0.25rem",
+                            zIndex: 10,
+                        }}
+                    >
+                        {IMAGE_ACTIONS.map(({ action, label }) => (
                             <button
                                 key={action}
-                                onClick={() => handleTextAction(action)}
-                                disabled={!selectedText.trim() || isProcessing}
+                                onClick={() => handleImageAction(action)}
                                 className="btn-primary"
-                                style={{ width: "100%" }}
+                                style={{ width: "auto", padding: "0.3rem 0.5rem", fontSize: "0.75rem" }}
+                                title={label}
                             >
-                                {isProcessing && activeAction === action ? `${label}…` : label}
+                                {label}
                             </button>
                         ))}
                     </div>
-
-                    {canEdit && (
-                        <div style={{ margin: '0.75rem 0' }}>
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                onChange={handleImageFileSelected}
-                                style={{ display: 'none' }}
-                            />
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={isUploadingImage}
-                                className="btn-primary"
-                                style={{ width: "100%" }}
-                            >
-                                {isUploadingImage ? 'Uploading...' : 'Insert Image'}
-                            </button>
-                            {uploadError && <p className="error-text">{uploadError}</p>}
-                        </div>
-                    )}
-
-                    {actionError && <p className="error-text">{actionError}</p>}
-
-                    {actionResult && activeAction && (
-                        <div style={{ marginTop: "1rem" }}>
-                            <strong>
-                                {TEXT_ACTIONS.find((a) => a.action === activeAction)?.label} result:
-                            </strong>
-                            <p style={{ whiteSpace: "pre-wrap" }}>{actionResult}</p>
-                        </div>
-                    )}
-
-                    {/* Image action result, same pattern as text result above */}
-                    {imageActionError && <p className="error-text">{imageActionError}</p>}
-
-                    {isProcessingImage && activeImageAction && (
-                        <div style={{ marginTop: "1rem" }}>
-                            <strong>
-                                {IMAGE_ACTIONS.find((a) => a.action === activeImageAction)?.label} result:
-                            </strong>
-                            <p className="muted">Performing action…</p>
-                        </div>
-                    )}
-
-                    {!isProcessingImage && imageActionResult && activeImageAction && (
-                        <div style={{ marginTop: "1rem" }}>
-                            <strong>
-                                {IMAGE_ACTIONS.find((a) => a.action === activeImageAction)?.label} result:
-                            </strong>
-                            <p style={{ whiteSpace: "pre-wrap" }}>{imageActionResult}</p>
-                        </div>
-                    )}
-                </aside>
+                )}
             </div>
+
+            <aside
+                style={{
+                    width: "320px",
+                    flexShrink: 0,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    borderRadius: "6px",
+                    padding: "1rem",
+                    overflowY: "auto",
+                }}
+            >
+                <h3 style={{ marginTop: 0 }}>AI Actions</h3>
+
+                {!selectedText.trim() && !selectedImage && (
+                    <p className="muted">
+                        Select text, or click an image, to see AI actions.
+                    </p>
+                )}
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                    {TEXT_ACTIONS.map(({ action, label }) => (
+                        <button
+                            key={action}
+                            onClick={() => handleTextAction(action)}
+                            disabled={!selectedText.trim()}
+                            className="btn-primary"
+                            style={{ width: "100%" }}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+
+                {canEdit && (
+                    <div style={{ margin: '0.75rem 0' }}>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageFileSelected}
+                            style={{ display: 'none' }}
+                        />
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploadingImage}
+                            className="btn-primary"
+                            style={{ width: "100%" }}
+                        >
+                            {isUploadingImage ? 'Uploading...' : 'Insert Image'}
+                        </button>
+                        {uploadError && <p className="error-text">{uploadError}</p>}
+                    </div>
+                )}
+
+                {formError && <p className="error-text">{formError}</p>}
+
+                {/* Tab strip — one tab per AI action run, draggable to
+                    reorder, closable, browser-tab style. */}
+                {tabs.length > 0 && (
+                    <div
+                        style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: "2px",
+                            borderBottom: "1px solid var(--border)",
+                            marginTop: "1rem",
+                        }}
+                    >
+                        {tabs.map((tab) => (
+                            <div
+                                key={tab.id}
+                                draggable
+                                onDragStart={() => handleTabDragStart(tab.id)}
+                                onDragOver={handleTabDragOver}
+                                onDrop={() => handleTabDrop(tab.id)}
+                                onClick={() => setActiveTabId(tab.id)}
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    padding: "0.35rem 0.5rem",
+                                    fontSize: "12px",
+                                    cursor: "pointer",
+                                    borderBottom: activeTabId === tab.id ? "2px solid var(--accent)" : "2px solid transparent",
+                                    color: activeTabId === tab.id ? "var(--text)" : "var(--text-muted)",
+                                    maxWidth: "130px",
+                                }}
+                                title={tab.label}
+                            >
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {tab.status === 'loading' ? '… ' : tab.status === 'error' ? '⚠ ' : ''}
+                                    {tab.label}
+                                </span>
+                                <span
+                                    onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
+                                    style={{ color: "var(--text-muted)", lineHeight: 1 }}
+                                    aria-label={`Close ${tab.label} tab`}
+                                >
+                                    ×
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {activeTab && (
+                    <div style={{ marginTop: "0.75rem" }}>
+                        {activeTab.status === 'loading' && <p className="muted">Performing action…</p>}
+                        {activeTab.status === 'error' && <p className="error-text">{activeTab.error}</p>}
+                        {activeTab.status === 'done' && <p style={{ whiteSpace: "pre-wrap" }}>{activeTab.result}</p>}
+                    </div>
+                )}
+            </aside>
         </div>
-    );
-}
+    </div>
+)};
 export default function DocumentEditorPage() {
     return (
         <RequireAuth>
