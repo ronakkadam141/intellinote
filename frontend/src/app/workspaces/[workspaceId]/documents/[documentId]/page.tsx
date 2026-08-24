@@ -12,6 +12,7 @@ import { WebsocketProvider } from "y-websocket";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
 import ResizableImage from 'tiptap-extension-resize-image';
+import { TextSelection } from "@tiptap/pm/state";
 
 interface DocumentDetail {
     id: string;
@@ -134,7 +135,11 @@ function DocumentEditorContent() {
         setSelectedImage(null);
         selectedImageWrapperRef.current = null;
         if (editor && !editor.isDestroyed) {
-            editor.commands.setTextSelection(editor.state.selection.to);
+            const { state, view } = editor;
+            const pos = Math.min(state.selection.to, state.doc.content.size);
+            const resolved = state.doc.resolve(pos);
+            const safeSelection = TextSelection.near(resolved);
+            view.dispatch(state.tr.setSelection(safeSelection));
         }
     }, [editor]);
 
