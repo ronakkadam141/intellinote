@@ -11,4 +11,11 @@ const loginValidator= [
     body('password').isLength({min:8}).withMessage('Password is required'),
 ];
 
-module.exports={registerValidator,loginValidator};
+const updateDisplayNameValidator = [
+    body('displayName')
+        .trim()
+        .notEmpty().withMessage('Display name cannot be empty.')
+        .isLength({ max: 60 }).withMessage('Display name must be 60 characters or fewer.'),
+];
+
+module.exports={registerValidator,loginValidator,updateDisplayNameValidator};

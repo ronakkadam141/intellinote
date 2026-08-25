@@ -7,6 +7,7 @@ import { apiClient, ApiError } from "@/lib/apiClient";
 import type { DocumentSummary } from "@/types/document";
 import type { Folder } from "@/types/folder";
 import Link from "next/link";
+import { useAuth } from "@/context/AuthContext";
 
 interface Crumb {
     id: string;
@@ -101,7 +102,27 @@ function WorkspaceHomeContent() {
     const [inviting, setInviting] = useState(false);
     const [inviteError, setInviteError] = useState<string | null>(null);
     const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+
+    const [memberActionPending, setMemberActionPending] = useState<string | null>(null);
+    const [memberActionError, setMemberActionError] = useState<string | null>(null);
+
+    const { user } = useAuth();
+
     
+    const ROLE_RANK: Record<"owner" | "editor" | "viewer", number> = {
+        owner: 0,
+        editor: 1,
+        viewer: 2,
+    };
+    function sortMembers(list: WorkspaceMemberEntry[]): WorkspaceMemberEntry[] {
+    return [...list].sort((a, b) => {
+        const rankDiff = ROLE_RANK[a.role] - ROLE_RANK[b.role];
+        if (rankDiff !== 0) return rankDiff;
+        const nameA = a.user.displayName ?? a.user.email;
+        const nameB = b.user.displayName ?? b.user.email;
+        return nameA.localeCompare(nameB);
+    });
+}
     useEffect(() => {
         let cancelled = false;
 
@@ -129,6 +150,7 @@ function WorkspaceHomeContent() {
             apiClient.get<{ members: WorkspaceMemberEntry[] }>(`/api/workspaces/${workspaceId}/members`),
         ])
             .then(([folderRes, docRes, trail, memberRes, membersListRes]) => {
+                setMembers(sortMembers(membersListRes.members));
                 if (!cancelled) {
                     setFolders(folderRes.folders);
                     setDocuments(docRes.documents);
@@ -202,7 +224,71 @@ function WorkspaceHomeContent() {
             setCreatingDoc(false);
         }
     }
+    // Promotion and demotion both go through this — the backend's
+    // updateMemberRole treats role as a plain target value, not a
+    // directional action, so 'owner' promotes, anything else demotes.
+    async function handleChangeRole(memberId: string, newRole: "owner" | "editor" | "viewer") {
+        const target = members.find((m) => m.memberId === memberId);
+        if (!target) return;
 
+        // Structural guard: an owner can never change their own role. This is
+        // what makes "owner demotes self and gets stuck" impossible, not just
+        // discouraged — someone else, still an owner, always has to do it.
+        if (target.user.id === user?.id) {
+            setMemberActionError("You can't change your own role. Ask another owner to do it.");
+            return;
+        }
+
+        if (newRole === "owner") {
+            const confirmed = window.confirm(
+                `Make ${target.user.displayName} an owner? Owners have full control over this workspace, including removing other members.`
+            );
+            if (!confirmed) return;
+        }
+
+        setMemberActionPending(memberId);
+        setMemberActionError(null);
+
+        try {
+            await apiClient.patch<{ member: WorkspaceMemberEntry }>(
+                `/api/workspaces/${workspaceId}/members/${memberId}/role`,
+                { role: newRole }
+            );
+            setMembers((prev) => sortMembers(prev.map((m) => (m.memberId === memberId ? { ...m, role: newRole } : m))));
+        } catch (err) {
+            setMemberActionError(err instanceof ApiError ? err.message : "Failed to update role.");
+        } finally {
+            setMemberActionPending(null);
+        }
+    }
+
+    async function handleRemoveMember(memberId: string, displayName: string) {
+        const target = members.find((m) => m.memberId === memberId);
+        if (!target) return;
+
+        if (target.user.id === user?.id) {
+            setMemberActionError("You can't remove yourself. Use \"Leave workspace\" instead.");
+            return;
+        }
+        if (target.role === "owner") {
+            setMemberActionError("Owners can't be removed directly — demote them first.");
+            return;
+        }
+
+        if (!window.confirm(`Remove ${displayName} from this workspace?`)) return;
+
+        setMemberActionPending(memberId);
+        setMemberActionError(null);
+
+        try {
+            await apiClient.delete(`/api/workspaces/${workspaceId}/members/${memberId}`);
+            setMembers((prev) => prev.filter((m) => m.memberId !== memberId));
+        } catch (err) {
+            setMemberActionError(err instanceof ApiError ? err.message : "Failed to remove member.");
+        } finally {
+            setMemberActionPending(null);
+        }
+    }
     // Owner-only, matching the backend's requireWorkspaceRole('owner') on
     // POST /members/invite exactly — gating client-side too avoids a
     // pointless round-trip to a 403 for editors/viewers.
@@ -217,7 +303,7 @@ function WorkspaceHomeContent() {
                 `/api/workspaces/${workspaceId}/members/invite`,
                 { email: inviteEmail.trim(), role: inviteRole }
             );
-
+            setMembers((prev) => sortMembers([...prev, member]));
             setMembers((prev) => [...prev, member]);
             setInviteSuccess(`${member.user.displayName} added as ${member.role}.`);
             setInviteEmail("");
@@ -317,7 +403,7 @@ function WorkspaceHomeContent() {
         setOpenMenuKey(null);
         const confirmMsg =
             type === "folder"
-                ? `Archive "${label}"? Subfolders will be archived too; documents inside will be moved to workspace root.`
+                ? `Archive "${label}"? All documents and subfolders inside will be archived too.`
                 : `Archive "${label}"?`;
         if (!window.confirm(confirmMsg)) return;
 
@@ -446,15 +532,54 @@ function WorkspaceHomeContent() {
             )}
 
             <p className="section-label">Members</p>
+            {memberActionError && <p className="error-text">{memberActionError}</p>}
             <div style={{ marginBottom: "0.75rem" }}>
-                {members.map((m) => (
-                    <div key={m.memberId} className="row">
-                        <span>{m.user.displayName} <span className="muted">({m.user.email})</span></span>
-                        <span className="muted">{m.role}</span>
-                    </div>
-                ))}
+                {members.map((m) => {
+                    const isSelf = m.user.id === user?.id;
+                    return (
+                        <div key={m.memberId} className="row">
+                            <span>
+                                {m.user.displayName} <span className="muted">({m.user.email})</span>
+                                {isSelf && <span className="muted"> — you</span>}
+                            </span>
+                            <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                                {workspaceRole === "owner" && !isSelf ? (
+                                    <select
+                                        value={m.role}
+                                        disabled={memberActionPending === m.memberId}
+                                        onChange={(e) =>
+                                            handleChangeRole(m.memberId, e.target.value as "owner" | "editor" | "viewer")
+                                        }
+                                        style={{
+                                            background: "var(--surface)",
+                                            color: "var(--text)",
+                                            border: "1px solid var(--border-strong)",
+                                            borderRadius: "4px",
+                                            padding: "0.25rem 0.4rem",
+                                            fontSize: "13px",
+                                        }}
+                                    >
+                                        <option value="owner">Owner</option>
+                                        <option value="editor">Editor</option>
+                                        <option value="viewer">Viewer</option>
+                                    </select>
+                                ) : (
+                                    <span className="muted">{m.role}</span>
+                                )}
+                                {workspaceRole === "owner" && !isSelf && m.role !== "owner" && (
+                                    <button
+                                        className="btn-danger"
+                                        disabled={memberActionPending === m.memberId}
+                                        onClick={() => handleRemoveMember(m.memberId, m.user.displayName)}
+                                    >
+                                        {memberActionPending === m.memberId ? "…" : "Remove"}
+                                    </button>
+                                )}
+                            </span>
+                        </div>
+                    );
+                })}
             </div>
-
             {workspaceRole === "owner" && (
                 <form onSubmit={handleInvite} style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
                     <input

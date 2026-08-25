@@ -19,9 +19,8 @@ const userSchema = new mongoose.Schema(
         
         displayName:{
             type: String,
-            required: false,
+            required: true,
             trim:true,
-            default:null,
             maxlength:60,
         },
         
