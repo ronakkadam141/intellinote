@@ -196,6 +196,7 @@ function initYjsServer(httpServer) {
             room.conns.add(ws);
             ws.isAlive = true;
             ws.__room = room;
+            ws.role = ticketEntry.role;
             ws.on('pong', () => { ws.isAlive = true; });
             console.log('[yjsServer] ws added to room, conns now:', room.conns.size);
             ws.controlledAwarenessIds = new Set();
@@ -235,16 +236,42 @@ function initYjsServer(httpServer) {
 
                     switch (messageType) {
                         case messageSync: {
+                            // Peek the inner sync-message subtype BEFORE letting the library
+                            // mutate anything. syncStep1 is a read-only handshake (client asking
+                            // "what do you have?") — always safe. syncStep2 and update are the
+                            // two message types that actually call Y.applyUpdate() and mutate
+                            // the shared doc, so those are the ones a viewer must never reach.
+                            const syncMessageType = decoding.readVarUint(decoder);
+
+                            if (
+                                ws.role === 'viewer' &&
+                                (syncMessageType === syncProtocol.messageYjsSyncStep2 ||
+                                syncMessageType === syncProtocol.messageYjsUpdate)
+                            ) {
+                                console.warn(`[yjsServer] blocked write attempt from viewer (document ${documentId})`);
+                                break; // drop it — no mutation, no reply, connection stays open
+                            }
+
                             const encoder = encoding.createEncoder();
                             encoding.writeVarUint(encoder, messageSync);
-                            syncProtocol.readSyncMessage(decoder, encoder, room.ydoc, ws);
+
+                            switch (syncMessageType) {
+                                case syncProtocol.messageYjsSyncStep1:
+                                    syncProtocol.readSyncStep1(decoder, encoder, room.ydoc);
+                                    break;
+                                case syncProtocol.messageYjsSyncStep2:
+                                    syncProtocol.readSyncStep2(decoder, room.ydoc, ws);
+                                    break;
+                                case syncProtocol.messageYjsUpdate:
+                                    syncProtocol.readUpdate(decoder, room.ydoc, ws);
+                                    break;
+                                default:
+                                    break;
+                            }
+
                             const replyLength = encoding.length(encoder);
-                            console.log('[yjsServer] sync reply computed, length:', replyLength, '(>1 means content will be sent)');
                             if (replyLength > 1) {
                                 ws.send(encoding.toUint8Array(encoder));
-                                console.log('[yjsServer] sync reply SENT to client');
-                            } else {
-                                console.log('[yjsServer] no sync reply needed — server thinks client is already up to date');
                             }
                             break;
                         }

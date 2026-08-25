@@ -129,6 +129,7 @@ function DocumentEditorContent() {
                 class: "border rounded p-4 min-h-[300px] focus:outline-none",
             },
         },
+        
     });
 
     const clearImageSelection = useCallback(() => {
@@ -142,6 +143,12 @@ function DocumentEditorContent() {
             view.dispatch(state.tr.setSelection(safeSelection));
         }
     }, [editor]);
+
+    useEffect(() => {
+        if (editor && !editor.isDestroyed) {
+            editor.setEditable(canEdit);
+        }
+    }, [editor, canEdit]);
 
     useEffect(() => {
         if (!editor) return;
@@ -177,6 +184,10 @@ function DocumentEditorContent() {
         };
     }, [editor]);
 
+    // Loads this document's own details (title, folder) and the current
+    // user's role in the workspace. This page only ever needs data about
+    // ITSELF — no folder/document browsing or member list belongs here;
+    // that's the workspace page's job.
     useEffect(() => {
         let cancelled = false;
 
@@ -513,7 +524,7 @@ function DocumentEditorContent() {
 
     const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
 
-    
+
     return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
         <p>

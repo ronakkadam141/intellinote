@@ -7,6 +7,8 @@ const errorHandler = (err, req, res, next) => {
   const context = `${req.method} ${req.path}${req.user?.id ? ` (user ${req.user.id})` : ''}`;
 
   // Mongoose validation error — expected client-input mistake, not a bug.
+
+  
   if (err.name === 'ValidationError') {
     console.warn(`[VALIDATION] ${context}:`, err.message);
     return res.status(400).json({
@@ -39,6 +41,18 @@ const errorHandler = (err, req, res, next) => {
   // has one (many controllers already throw typed errors like AI_TIMEOUT
   // or FOLDER_NOT_FOUND — if one reaches here unhandled, that code is the
   // fastest way to see which code path was missed), and request context.
+
+  if (err.statusCode) {
+    const isClientError = err.statusCode < 500;
+    (isClientError ? console.warn : console.error)(
+      `[${err.code || 'HANDLED'}] ${context}:`, err.message
+    );
+    return res.status(err.statusCode).json({
+      success: false,
+      error: { code: err.code || 'ERROR', message: err.message },
+    });
+  }
+  
   console.error(
     `[UNHANDLED ERROR] ${context}\n` +
     `  name: ${err.name || 'Error'}${err.code ? `, code: ${err.code}` : ''}\n` +

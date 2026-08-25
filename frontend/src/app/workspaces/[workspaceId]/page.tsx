@@ -24,6 +24,18 @@ interface FolderTreeNode {
     depth: number;
 }
 
+interface WorkspaceMemberEntry {
+    memberId: string;
+    role: "owner" | "editor" | "viewer";
+    joinedAt: string;
+    user: {
+        id: string;
+        displayName: string;
+        email: string;
+        avatarUrl: string | null;
+    };
+}
+
 type ItemType = "folder" | "document";
 
 function keyFor(type: ItemType, id: string) {
@@ -80,6 +92,16 @@ function WorkspaceHomeContent() {
     const [moveTarget, setMoveTarget] = useState<string>("");
     const [actionPending, setActionPending] = useState<string | null>(null);
 
+    // Invite / membership state — this workspace page is the correct home
+    // for this (not the document editor page); membership is a
+    // workspace-level concept, not a per-document one.
+    const [members, setMembers] = useState<WorkspaceMemberEntry[]>([]);
+    const [inviteEmail, setInviteEmail] = useState("");
+    const [inviteRole, setInviteRole] = useState<"editor" | "viewer">("editor");
+    const [inviting, setInviting] = useState(false);
+    const [inviteError, setInviteError] = useState<string | null>(null);
+    const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+    
     useEffect(() => {
         let cancelled = false;
 
@@ -104,13 +126,15 @@ function WorkspaceHomeContent() {
             apiClient.get<{ documents: DocumentSummary[] }>(`/api/workspaces/${workspaceId}/documents?folderId=${activeFolderId ?? "root"}`),
             loadBreadcrumbs(),
             apiClient.get<{ role: "owner" | "editor" | "viewer" }>(`/api/workspaces/${workspaceId}/members/me`),
+            apiClient.get<{ members: WorkspaceMemberEntry[] }>(`/api/workspaces/${workspaceId}/members`),
         ])
-            .then(([folderRes, docRes, trail, memberRes]) => {
+            .then(([folderRes, docRes, trail, memberRes, membersListRes]) => {
                 if (!cancelled) {
                     setFolders(folderRes.folders);
                     setDocuments(docRes.documents);
                     setBreadcrumbs(trail);
                     setWorkspaceRole(memberRes.role);
+                    setMembers(membersListRes.members);
                 }
             })
             .catch((err) => {
@@ -176,6 +200,34 @@ function WorkspaceHomeContent() {
             setError(err instanceof ApiError ? err.message : "Failed to create document.");
         } finally {
             setCreatingDoc(false);
+        }
+    }
+
+    // Owner-only, matching the backend's requireWorkspaceRole('owner') on
+    // POST /members/invite exactly — gating client-side too avoids a
+    // pointless round-trip to a 403 for editors/viewers.
+    async function handleInvite(e: SyntheticEvent<HTMLFormElement>) {
+        e.preventDefault();
+        setInviting(true);
+        setInviteError(null);
+        setInviteSuccess(null);
+
+        try {
+            const { member } = await apiClient.post<{ member: WorkspaceMemberEntry }>(
+                `/api/workspaces/${workspaceId}/members/invite`,
+                { email: inviteEmail.trim(), role: inviteRole }
+            );
+
+            setMembers((prev) => [...prev, member]);
+            setInviteSuccess(`${member.user.displayName} added as ${member.role}.`);
+            setInviteEmail("");
+        } catch (err) {
+            // Surfaces the backend's specific error codes (USER_NOT_FOUND,
+            // ALREADY_A_MEMBER, INVALID_ROLE) directly via err.message —
+            // these are expected, common cases, not generic failures.
+            setInviteError(err instanceof ApiError ? err.message : "Failed to send invite.");
+        } finally {
+            setInviting(false);
         }
     }
 
@@ -392,6 +444,38 @@ function WorkspaceHomeContent() {
                     })}
                 </p>
             )}
+
+            <p className="section-label">Members</p>
+            <div style={{ marginBottom: "0.75rem" }}>
+                {members.map((m) => (
+                    <div key={m.memberId} className="row">
+                        <span>{m.user.displayName} <span className="muted">({m.user.email})</span></span>
+                        <span className="muted">{m.role}</span>
+                    </div>
+                ))}
+            </div>
+
+            {workspaceRole === "owner" && (
+                <form onSubmit={handleInvite} style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
+                    <input
+                        type="email"
+                        placeholder="Invite by email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        style={{ flex: 1 }}
+                        required
+                    />
+                    <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as "editor" | "viewer")}>
+                        <option value="editor">Editor</option>
+                        <option value="viewer">Viewer</option>
+                    </select>
+                    <button type="submit" className="btn-primary" disabled={inviting}>
+                        {inviting ? "Inviting…" : "Invite"}
+                    </button>
+                </form>
+            )}
+            {inviteError && <p className="error-text">{inviteError}</p>}
+            {inviteSuccess && <p className="muted">{inviteSuccess}</p>}
 
             <p className="section-label">Folders</p>
             {folders.length === 0 ? (
