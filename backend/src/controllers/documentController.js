@@ -526,6 +526,164 @@ const archiveDocument= async(req,res,next)=>{
 }
 
 /*
+ GET ARCHIVED ITEMS
+
+ Flat listing of every archived folder and document in the workspace —
+ owner-only (enforced at the route level). This is the recovery view: no
+ hierarchy needed here, just "everything archived, in one place."
+*/
+const getArchivedItems = async (req, res, next) => {
+    try {
+        const { workspaceId } = req.params;
+
+        const archivedFolders = await Folder.find({ workspaceId, isArchived: true })
+            .sort({ name: 1 })
+            .lean();
+
+        const archivedDocuments = await Document.find({ workspaceId, isArchived: true })
+            .sort({ updatedAt: -1 })
+            .select('-content -yjsState')
+            .populate('createdBy', 'displayName avatarUrl')
+            .populate('lastEditedBy', 'displayName avatarUrl')
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                folders: archivedFolders.map((f) => ({
+                    id: f._id,
+                    name: f.name,
+                    workspaceId: f.workspaceId,
+                    parentFolderId: f.parentFolderId,
+                    createdAt: f.createdAt,
+                    updatedAt: f.updatedAt,
+                })),
+                documents: archivedDocuments.map((d) => ({
+                    id: d._id,
+                    title: d.title,
+                    workspaceId: d.workspaceId,
+                    folderId: d.folderId,
+                    isPinned: d.isPinned,
+                    tags: d.tags,
+                    createdBy: d.createdBy,
+                    lastEditedBy: d.lastEditedBy,
+                    createdAt: d.createdAt,
+                    updatedAt: d.updatedAt,
+                })),
+            },
+        });
+    } catch (err) {
+        return next(err);
+    }
+};
+
+/*
+ GET ARCHIVED DOCUMENT BY ID
+
+ Read-only view of an archived document's full content. Deliberately a
+ separate endpoint from getDocumentById rather than a shared one with a
+ flag — keeps the "active" path simple and makes the archived path's
+ owner-only restriction explicit at the route level, not buried in a
+ conditional.
+
+ No ws-ticket path exists for archived documents (issueWsTicket already
+ requires isArchived:false), so there's no way to open a live editing
+ session on one — read-only is enforced structurally, not just by the
+ frontend hiding buttons.
+*/
+const getArchivedDocumentById = async (req, res, next) => {
+    try {
+        const { workspaceId, documentId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(documentId)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_ID', message: 'Invalid document ID format.' },
+            });
+        }
+
+        const document = await Document.findOne({ _id: documentId, workspaceId, isArchived: true })
+            .select('-yjsState')
+            .populate('createdBy', 'displayName avatarUrl')
+            .populate('lastEditedBy', 'displayName avatarUrl')
+            .lean();
+
+        if (!document) {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'DOCUMENT_NOT_FOUND', message: 'Archived document not found.' },
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                document: {
+                    id: document._id,
+                    title: document.title,
+                    content: document.contentJSON ?? document.content,                    workspaceId: document.workspaceId,
+                    folderId: document.folderId,
+                    isPinned: document.isPinned,
+                    tags: document.tags,
+                    images: document.images,
+                    createdBy: document.createdBy,
+                    lastEditedBy: document.lastEditedBy,
+                    createdAt: document.createdAt,
+                    updatedAt: document.updatedAt,
+                },
+            },
+        });
+    } catch (err) {
+        return next(err);
+    }
+};
+
+/*
+ UNARCHIVE DOCUMENT
+
+ Restores a single archived document directly to workspace root —
+ regardless of its original folderId — since that folder may still be
+ archived, which would make the "restored" document immediately invisible
+ again. Root is always a safe, visible destination.
+*/
+const unarchiveDocument = async (req, res, next) => {
+    try {
+        const { workspaceId, documentId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(documentId)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_ID', message: 'Invalid document ID format.' },
+            });
+        }
+
+        const document = await Document.findOneAndUpdate(
+            { _id: documentId, workspaceId, isArchived: true },
+            { $set: { isArchived: false, folderId: null } },
+            { new: true, runValidators: true },
+        ).select('_id title folderId');
+
+        if (!document) {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'DOCUMENT_NOT_FOUND', message: 'Archived document not found.' },
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                message: 'Document restored to workspace root.',
+                documentId: document._id,
+                title: document.title,
+            },
+        });
+    } catch (err) {
+        return next(err);
+    }
+};
+
+/*
     issue ws ticket
 
     single use shortlived ticket that authenticates susequent websockets 
@@ -591,4 +749,7 @@ module.exports={
     updateDocumentTags,
     archiveDocument,
     issueWsTicket,
+    unarchiveDocument,
+    getArchivedItems,
+    getArchivedDocumentById,
 };

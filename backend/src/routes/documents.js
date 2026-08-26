@@ -9,6 +9,9 @@ const {
     updateDocumentTags,
     archiveDocument,
     issueWsTicket,
+    getArchivedItems,
+    getArchivedDocumentById,
+    unarchiveDocument,
 }=require("../controllers/documentController");
 
 const {authenticate} = require('../middleware/auth');
@@ -19,6 +22,12 @@ const {createDocumentValidator,updateDocumentValidator,updateTagsValidator,delet
 const { deleteDocumentImage } = require('../controllers/imageController');
 
 router.use(authenticate,requireWorkspaceAccess);
+
+// Archived-item routes registered BEFORE /:documentId — otherwise Express
+// matches "archived" itself as a :documentId value on the generic route.
+router.get("/archived", requireWorkspaceRole('owner'), getArchivedItems);
+router.get("/archived/:documentId", requireWorkspaceRole('owner'), getArchivedDocumentById);
+router.patch("/:documentId/unarchive", requireWorkspaceRole('owner'), unarchiveDocument);
 
 router.get("/", getDocuments);
 router.get("/:documentId", getDocumentById);

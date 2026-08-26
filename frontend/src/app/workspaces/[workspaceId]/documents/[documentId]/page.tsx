@@ -13,6 +13,9 @@ import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
 import ResizableImage from 'tiptap-extension-resize-image';
 import { TextSelection } from "@tiptap/pm/state";
+import CollaborationCursor from "@tiptap/extension-collaboration-cursor";
+import * as awarenessProtocol from "y-protocols/awareness";
+import { useAuth } from "@/context/AuthContext";
 
 interface DocumentDetail {
     id: string;
@@ -62,6 +65,20 @@ interface AiResultTab {
     result: string | null;
     error: string | null;
 }
+interface OnlineUser {
+    clientId: number;
+    name: string;
+    color: string;
+}
+
+const CURSOR_COLORS = ["#e07a5f", "#81b29a", "#3d5a80", "#f2cc8f", "#9b5de5", "#00b4d8"];
+
+function colorForUser(userId: string | undefined): string {
+    if (!userId) return CURSOR_COLORS[0];
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+    return CURSOR_COLORS[Math.abs(hash) % CURSOR_COLORS.length];
+}
 
 function extractErrorMessage(err: unknown): string {
     if (err instanceof ApiError && err.status === 429) {
@@ -89,7 +106,8 @@ function DocumentEditorContent() {
     const providerRef = useRef<WebsocketProvider | null>(null);
 
     const [ydoc] = useState(() => new Y.Doc());
-
+    const [awareness] = useState(() => new awarenessProtocol.Awareness(ydoc));
+    const { user } = useAuth();
     const [selectedText, setSelectedText] = useState("");
 
     // AI result tabs — replaces activeAction/isProcessing/actionResult/
@@ -116,6 +134,7 @@ function DocumentEditorContent() {
 
     const toolbarRef = useRef<HTMLDivElement | null>(null);
     const selectedImageWrapperRef = useRef<HTMLElement | null>(null);
+    const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
 
     const editor = useEditor({
         immediatelyRender: false,
@@ -123,6 +142,13 @@ function DocumentEditorContent() {
             StarterKit.configure({ undoRedo: false }),
             Collaboration.configure({ document: ydoc, field: YJS_FIELD_NAME }),
             ResizableImage,
+            CollaborationCursor.configure({
+                provider: { awareness },
+                user: {
+                    name: user?.displayName || user?.email || "Anonymous",
+                    color: colorForUser(user?.id),
+                },
+            }),
         ],
         editorProps: {
             attributes: {
@@ -143,6 +169,27 @@ function DocumentEditorContent() {
             view.dispatch(state.tr.setSelection(safeSelection));
         }
     }, [editor]);
+
+    useEffect(() => {
+        function updatePresence() {
+            const states = Array.from(awareness.getStates().entries());
+            const users: OnlineUser[] = states
+                .filter(([, state]) => state?.user)
+                .map(([clientId, state]) => ({
+                    clientId,
+                    name: state.user.name,
+                    color: state.user.color,
+                }));
+            setOnlineUsers(users);
+        }
+
+        awareness.on("change", updatePresence);
+        updatePresence();
+
+        return () => {
+            awareness.off("change", updatePresence);
+        };
+    }, [awareness]);
 
     useEffect(() => {
         if (editor && !editor.isDestroyed) {
@@ -244,6 +291,7 @@ function DocumentEditorContent() {
                     connect: true,
                     resyncInterval: -1,
                     shouldReconnect: () => false,
+                    awareness,
                 });
 
                 if (cancelled) {
@@ -300,7 +348,7 @@ function DocumentEditorContent() {
             provider?.destroy();
             providerRef.current = null;
         };
-    }, [workspaceId, documentId, ydoc]);
+    }, [workspaceId, documentId, ydoc,awareness]);
 
     useEffect(() => {
         function handleBeforeUnload() {
@@ -550,6 +598,29 @@ function DocumentEditorContent() {
                 <span className="error-text"> — refresh the page to reconnect</span>
             )}
         </p>
+
+        {onlineUsers.length > 0 && (
+            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", margin: "0.5rem 0" }}>
+                <span className="muted" style={{ fontSize: "12px" }}>Editing now:</span>
+                {onlineUsers.map((u) => (
+                    <span
+                        key={u.clientId}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontSize: "12px",
+                            background: "var(--surface-2)",
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                        }}
+                    >
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: u.color, display: "inline-block" }} />
+                        {u.name}
+                    </span>
+                ))}
+            </div>
+        )}
 
         <div style={{ display: "flex", gap: "1rem", alignItems: "stretch", flex: 1, minHeight: 0 }}>
             <div ref={editorWrapperRef} style={{ flex: 1, position: "relative", overflowY: "auto" }}>

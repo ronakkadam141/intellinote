@@ -242,7 +242,105 @@ const getDescendantsFolderIds = async(rootFolderId,workspaceId,session) =>{
     return descendantIds;
 }
 
+// Same BFS pattern as getDescendantsFolderIds, but walks ARCHIVED
+// children — needed because when a folder is unarchived, we need to find
+// exactly the descendants that were archived alongside it (via the same
+// cascade), not currently-active ones.
+const getArchivedDescendantFolderIds = async (rootFolderId, workspaceId, session) => {
+    const descendantIds = [];
+    let frontier = [rootFolderId];
 
+    while (frontier.length > 0) {
+        const children = await Folder.find({
+            workspaceId,
+            parentFolderId: { $in: frontier },
+            isArchived: true,
+        }).select('_id').session(session || null).lean();
+
+        const childIds = children.map((c) => c._id);
+        descendantIds.push(...childIds);
+        frontier = childIds;
+    }
+
+    return descendantIds;
+};
+
+/*
+ UNARCHIVE FOLDER
+
+ Restores an archived folder, its archived descendant folders, and any
+ documents that were archived as part of the same cascade — mirroring
+ archiveFolder's own cascade exactly, in reverse. Wrapped in a transaction
+ for the same reason archiveFolder is: no partial-restore state.
+*/
+const unarchiveFolder = async (req, res, next) => {
+    const session = await mongoose.startSession();
+    try {
+        const { workspaceId, folderId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(folderId)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_ID', message: 'Invalid folder ID format.' },
+            });
+        }
+
+        let restoredFolderIds = [];
+        let restoredDocumentCount = 0;
+
+        await session.withTransaction(async () => {
+            const rootFolder = await Folder.findOne({
+                _id: folderId,
+                workspaceId,
+                isArchived: true,
+            }).session(session);
+
+            if (!rootFolder) {
+                const err = new Error('Archived folder not found.');
+                err.statusCode = 404;
+                err.code = 'FOLDER_NOT_FOUND';
+                throw err;
+            }
+
+            const descendantIds = await getArchivedDescendantFolderIds(rootFolder._id, workspaceId, session);
+            restoredFolderIds = [rootFolder._id, ...descendantIds];
+
+            await Folder.updateMany(
+                { _id: { $in: restoredFolderIds } },
+                { $set: { isArchived: false } },
+                { session }
+            );
+
+            const result = await Document.updateMany(
+                { folderId: { $in: restoredFolderIds }, workspaceId, isArchived: true },
+                { $set: { isArchived: false } },
+                { session }
+            );
+
+            restoredDocumentCount = result.modifiedCount;
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                message: 'Folder and its contents restored.',
+                folderId,
+                restoredFolderCount: restoredFolderIds.length,
+                restoredDocumentCount,
+            },
+        });
+    } catch (err) {
+        if (err.statusCode === 404) {
+            return res.status(404).json({
+                success: false,
+                error: { code: err.code, message: err.message },
+            });
+        }
+        return next(err);
+    } finally {
+        session.endSession();
+    }
+};
 
 /* 
 UPDATE FOLDER
@@ -453,7 +551,7 @@ const archiveFolder = async (req,res,next)=>{
         } 
 
         let archivedFolderIds=[]; 
-        let unfiledCount=0;
+        let archivedDocumentCount=0;
         
 
         await session.withTransaction(async()=>{
@@ -480,32 +578,37 @@ const archiveFolder = async (req,res,next)=>{
                 {session}
             )
 
+            // Cascade archive: documents inside the archived folder (and any
+            // of its now-archived descendant folders) are archived along
+            // with it, not unfiled to root. Matches archiveDocument's own
+            // soft-delete semantics — content is preserved, nothing is
+            // deleted, just marked isArchived:true, recoverable via the
+            // archived-items view.
             const result = await Document.updateMany(
                 {
                     folderId : {$in:archivedFolderIds},
                     workspaceId,
                     isArchived:false,
                 },
-                {$set:{folderId:null}},
+                {$set:{isArchived:true}},
                 {session}
             );
 
-            unfiledCount = result.modifiedCount;
+            archivedDocumentCount = result.modifiedCount;
         });
 
         return res.status(200).json({
             success: true,
             data: {
-                message: 'Folder archived. Documents have been moved to workspace root.',
+                message: 'Folder and its contents archived.',
                 folderId,
                 archivedFolderCount : archivedFolderIds.length,
-                unfiledDocuments: unfiledCount,
+                archivedDocumentCount,
             },
         });
     }
     
     catch (err) {
-    // Handle the manually thrown 404 from inside the transaction
         if (err.statusCode === 404) {
           return res.status(404).json({
             success: false,
@@ -529,4 +632,5 @@ module.exports = {
     getFolderById,
     updateFolder,
     archiveFolder,
+    unarchiveFolder,
 }

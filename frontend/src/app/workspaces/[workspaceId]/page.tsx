@@ -37,6 +37,11 @@ interface WorkspaceMemberEntry {
     };
 }
 
+interface ArchiveChildren {
+    folders: FolderWithParent[];
+    documents: DocumentSummary[];
+    
+}
 type ItemType = "folder" | "document";
 
 function keyFor(type: ItemType, id: string) {
@@ -64,6 +69,17 @@ async function fetchAllFoldersFlat(workspaceId: string): Promise<FolderTreeNode[
 function getDescendantIds(tree: FolderTreeNode[], rootId: string): string[] {
     const children = tree.filter((f) => f.parentFolderId === rootId).map((f) => f.id);
     return children.reduce<string[]>((acc, cid) => [...acc, cid, ...getDescendantIds(tree, cid)], []);
+}
+
+const ROLE_RANK: Record<"owner" | "editor" | "viewer", number> = { owner: 0, editor: 1, viewer: 2 };
+function sortMembers(list: WorkspaceMemberEntry[]): WorkspaceMemberEntry[] {
+    return [...list].sort((a, b) => {
+        const rankDiff = ROLE_RANK[a.role] - ROLE_RANK[b.role];
+        if (rankDiff !== 0) return rankDiff;
+        const nameA = a.user.displayName ?? a.user.email;
+        const nameB = b.user.displayName ?? b.user.email;
+        return nameA.localeCompare(nameB);
+    });
 }
 
 function WorkspaceHomeContent() {
@@ -108,21 +124,15 @@ function WorkspaceHomeContent() {
 
     const { user } = useAuth();
 
-    
-    const ROLE_RANK: Record<"owner" | "editor" | "viewer", number> = {
-        owner: 0,
-        editor: 1,
-        viewer: 2,
-    };
-    function sortMembers(list: WorkspaceMemberEntry[]): WorkspaceMemberEntry[] {
-    return [...list].sort((a, b) => {
-        const rankDiff = ROLE_RANK[a.role] - ROLE_RANK[b.role];
-        if (rankDiff !== 0) return rankDiff;
-        const nameA = a.user.displayName ?? a.user.email;
-        const nameB = b.user.displayName ?? b.user.email;
-        return nameA.localeCompare(nameB);
-    });
-}
+    const [showArchived, setShowArchived] = useState(false);
+    const [archivedDocuments, setArchivedDocuments] = useState<DocumentSummary[]>([]);
+    const [archivedLoading, setArchivedLoading] = useState(false);
+    const [archivedError, setArchivedError] = useState<string | null>(null);
+    const [restoringKey, setRestoringKey] = useState<string | null>(null);
+    const [archivedFolders, setArchivedFolders] = useState<FolderWithParent[]>([]);   // was Folder[]   
+
+
+
     useEffect(() => {
         let cancelled = false;
 
@@ -446,6 +456,118 @@ function WorkspaceHomeContent() {
         return <a href={href}>{label}</a>;
     }
 
+    async function loadArchivedItems() {
+        
+        setArchivedLoading(true);
+        setArchivedError(null);
+        try {
+            const { folders: af, documents: ad } = await apiClient.get<{ folders: FolderWithParent[]; documents: DocumentSummary[] }>(`/api/workspaces/${workspaceId}/documents/archived`);
+            setArchivedFolders(af);
+            setArchivedDocuments(ad);
+        } catch (err) {
+            setArchivedError(err instanceof ApiError ? err.message : "Failed to load archived items.");
+        } finally {
+            setArchivedLoading(false);
+        }
+    }
+
+    function buildArchiveChildren(folders: FolderWithParent[], documents: DocumentSummary[]): Map<string, ArchiveChildren> {
+        const folderIds = new Set(folders.map((f) => f.id));
+        const map = new Map<string, ArchiveChildren>();
+        const ensure = (key: string) => map.get(key) ?? (map.set(key, { folders: [], documents: [] }), map.get(key)!);
+
+        folders.forEach((f) => {
+            const parentKey = f.parentFolderId && folderIds.has(f.parentFolderId) ? f.parentFolderId : "root";
+            ensure(parentKey).folders.push(f);
+        });
+        documents.forEach((d) => {
+            const parentKey = d.folderId && folderIds.has(d.folderId) ? d.folderId : "root";
+            ensure(parentKey).documents.push(d);
+        });
+        return map;
+    }
+
+    function renderArchiveNode(nodeKey: string, childrenMap: Map<string, ArchiveChildren>, depth: number) {
+        const node = childrenMap.get(nodeKey);
+        if (!node) return null;
+        return (
+            <>
+                {node.folders.map((f) => (
+                    <div key={f.id}>
+                        <div className="row" style={{ marginLeft: depth * 20 }}>
+                            <span>{f.name} <span className="muted">(folder)</span></span>
+                            <button className="btn-primary" disabled={restoringKey === keyFor("folder", f.id)} onClick={() => handleUnarchiveFolder(f.id, f.name)}>
+                                {restoringKey === keyFor("folder", f.id) ? "Restoring…" : "Restore"}
+                            </button>
+                        </div>
+                        {renderArchiveNode(f.id, childrenMap, depth + 1)}
+                    </div>
+                ))}
+                {node.documents.map((d) => (
+                    <div key={d.id} className="row" style={{ marginLeft: depth * 20 }}>
+                        <span><Link href={`/workspaces/${workspaceId}/archived/${d.id}`}>{d.title}</Link> <span className="muted">(document)</span></span>
+                        <button className="btn-primary" disabled={restoringKey === keyFor("document", d.id)} onClick={() => handleUnarchiveDocument(d.id, d.title)}>
+                            {restoringKey === keyFor("document", d.id) ? "Restoring…" : "Restore"}
+                        </button>
+                    </div>
+                ))}
+            </>
+        );
+    }
+
+    function toggleArchivedView() {
+        const next = !showArchived;
+        setShowArchived(next);
+        if (next) loadArchivedItems();
+    }
+
+    // Restoring can bring an item back into whatever folder/root the user is
+    // currently viewing — refetch the active lists so it appears immediately,
+    // rather than requiring a manual reload.
+    async function refreshActiveView() {
+        try {
+            const [folderRes, docRes] = await Promise.all([
+                apiClient.get<{ folders: Folder[] }>(`/api/workspaces/${workspaceId}/folders?parentId=${activeFolderId ?? "root"}`),
+                apiClient.get<{ documents: DocumentSummary[] }>(`/api/workspaces/${workspaceId}/documents?folderId=${activeFolderId ?? "root"}`),
+            ]);
+            setFolders(folderRes.folders);
+            setDocuments(docRes.documents);
+        } catch {
+            // Non-critical — the archived list itself is already updated below;
+            // the active view will just catch up on next natural reload.
+        }
+    }
+
+    async function handleUnarchiveFolder(folderId: string, name: string) {
+        const key = keyFor("folder", folderId);
+        setRestoringKey(key);
+        setArchivedError(null);
+        try {
+            await apiClient.patch(`/api/workspaces/${workspaceId}/folders/${folderId}/unarchive`);
+            await loadArchivedItems();
+            refreshActiveView();
+        } catch (err) {
+            setArchivedError(err instanceof ApiError ? err.message : `Failed to restore "${name}".`);
+        } finally {
+            setRestoringKey(null);
+        }
+    }
+
+    async function handleUnarchiveDocument(documentId: string, title: string) {
+        const key = keyFor("document", documentId);
+        setRestoringKey(key);
+        setArchivedError(null);
+        try {
+            await apiClient.patch(`/api/workspaces/${workspaceId}/documents/${documentId}/unarchive`);
+            setArchivedDocuments((prev) => prev.filter((d) => d.id !== documentId));
+            refreshActiveView();
+        } catch (err) {
+            setArchivedError(err instanceof ApiError ? err.message : `Failed to restore "${title}".`);
+        } finally {
+            setRestoringKey(null);
+        }
+    }
+
     function renderActions(type: ItemType, id: string, label: string) {
         if (!canEdit) return null;
         const key = keyFor(type, id);
@@ -624,6 +746,28 @@ function WorkspaceHomeContent() {
                         </div>
                     ))}
                 </div>
+            )}
+            {workspaceRole === "owner" && (
+                <>
+                    <button onClick={toggleArchivedView} style={{ marginBottom: "0.75rem" }}>
+                        {showArchived ? "Hide archived items" : "View archived items"}
+                    </button>
+
+                    {showArchived && (
+                        <div style={{ marginBottom: "1.5rem", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "1rem" }}>
+                            <p className="section-label" style={{ marginTop: 0 }}>Archived</p>
+                            {archivedError && <p className="error-text">{archivedError}</p>}
+                            {archivedLoading ? (
+                                <p className="muted">Loading archived items…</p>
+                            ) : archivedFolders.length === 0 && archivedDocuments.length === 0 ? (
+                                <p className="muted">Nothing archived.</p>
+                            ) : (
+                                <>
+                                    {renderArchiveNode("root", buildArchiveChildren(archivedFolders, archivedDocuments), 0)}                                </>
+                            )}
+                        </div>
+                    )}
+                </>
             )}
             <form onSubmit={handleCreateFolder} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
                 <input

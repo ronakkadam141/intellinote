@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema(
             required: true,
             trim:true,
             maxlength:60,
+            unique:true,
         },
         
         avatarUrl:{
