@@ -12,6 +12,7 @@ const {
     getArchivedItems,
     getArchivedDocumentById,
     unarchiveDocument,
+    hardDeleteDocument,
 }=require("../controllers/documentController");
 
 const {authenticate} = require('../middleware/auth');
@@ -38,5 +39,5 @@ router.patch("/:documentId", requireWorkspaceRole('editor'),updateDocumentValida
 router.patch("/:documentId/tags", requireWorkspaceRole('editor'),updateTagsValidator,validate,updateDocumentTags);
 router.delete("/:documentId",requireWorkspaceRole('editor'),archiveDocument);
 router.delete("/:documentId/images/:imageId",requireWorkspaceRole('editor'),deleteDocumentImageValidator,validate,deleteDocumentImage)
-
+router.delete("/:documentId/permanent", requireWorkspaceRole('owner'), hardDeleteDocument);
 module.exports = router;

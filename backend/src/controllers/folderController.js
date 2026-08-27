@@ -1,6 +1,7 @@
 const Folder = require('../models/Folder');
 const mongoose = require('mongoose');
 const Document = require('../models/Document');
+const { deleteCloudinaryImages } = require('./imageController');
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -626,6 +627,104 @@ const archiveFolder = async (req,res,next)=>{
     }
 };
 
+// Same BFS as getDescendantsFolderIds, but with NO isArchived filter —
+// hard-deleting a folder must sweep up every descendant regardless of
+// archive state, since "permanently delete everything under here" doesn't
+// care whether a subfolder happened to already be archived or not.
+const getAllDescendantFolderIds = async (rootFolderId, workspaceId, session) => {
+    const descendantIds = [];
+    let frontier = [rootFolderId];
+
+    while (frontier.length > 0) {
+        const children = await Folder.find({
+            workspaceId,
+            parentFolderId: { $in: frontier },
+        }).select('_id').session(session || null).lean();
+
+        const childIds = children.map((c) => c._id);
+        descendantIds.push(...childIds);
+        frontier = childIds;
+    }
+
+    return descendantIds;
+};
+
+/*
+ HARD DELETE FOLDER
+
+ Permanently deletes a folder, every descendant folder, every document
+ inside any of them (active or archived), and their Cloudinary images.
+ Irreversible — no archive fallback exists after this.
+*/
+const hardDeleteFolder = async (req, res, next) => {
+    const session = await mongoose.startSession();
+    try {
+        const { workspaceId, folderId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(folderId)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_ID', message: 'Invalid folder ID format.' },
+            });
+        }
+
+        let deletedFolderCount = 0;
+        let deletedDocumentCount = 0;
+        let imagesToClean = [];
+
+        await session.withTransaction(async () => {
+            const rootFolder = await Folder.findOne({ _id: folderId, workspaceId }).session(session);
+
+            if (!rootFolder) {
+                const err = new Error('Folder not found.');
+                err.statusCode = 404;
+                err.code = 'FOLDER_NOT_FOUND';
+                throw err;
+            }
+
+            const descendantIds = await getAllDescendantFolderIds(rootFolder._id, workspaceId, session);
+            const allFolderIds = [rootFolder._id, ...descendantIds];
+
+            const documentsToDelete = await Document.find({
+                folderId: { $in: allFolderIds },
+                workspaceId,
+            }).select('images').session(session).lean();
+
+            deletedDocumentCount = documentsToDelete.length;
+            imagesToClean = documentsToDelete.flatMap((d) => d.images || []);
+
+            await Document.deleteMany({ folderId: { $in: allFolderIds }, workspaceId }, { session });
+            await Folder.deleteMany({ _id: { $in: allFolderIds } }, { session });
+
+            deletedFolderCount = allFolderIds.length;
+        });
+
+        deleteCloudinaryImages(imagesToClean).catch((err) =>
+            console.error('[hardDeleteFolder] Cloudinary cleanup error:', err)
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                message: 'Folder and its contents permanently deleted.',
+                folderId,
+                deletedFolderCount,
+                deletedDocumentCount,
+            },
+        });
+    } catch (err) {
+        if (err.statusCode === 404) {
+            return res.status(404).json({
+                success: false,
+                error: { code: err.code, message: err.message },
+            });
+        }
+        return next(err);
+    } finally {
+        session.endSession();
+    }
+};
+
 module.exports = {
     createFolder,
     getFolders,
@@ -633,4 +732,5 @@ module.exports = {
     updateFolder,
     archiveFolder,
     unarchiveFolder,
+    hardDeleteFolder,
 }

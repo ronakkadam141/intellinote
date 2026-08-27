@@ -2,6 +2,7 @@ const cloudinary = require('../config/cloudinary');
 const upload = require('../middleware/upload');
 const Document = require('../models/Document');
 
+
 function uploadBufferToCloudinary(buffer,folder){
     return new Promise((resolve,reject)=>{
         const stream = cloudinary.uploader.upload_stream(
@@ -154,4 +155,23 @@ async function deleteDocumentImage(req,res,next){
         return next(err);
     }
 }
-module.exports = {uploadImage,deleteDocumentImage};
+// Best-effort bulk Cloudinary cleanup — used by hard-delete cascades
+// (document, folder, workspace). Runs after the Mongo transaction commits,
+// never inside it: Cloudinary is a separate external system with no
+// transactional guarantee, so a slow or failed image delete should never
+// block or roll back an already-committed database deletion. Failures are
+// logged, not thrown — losing one orphaned image asset is a much smaller
+// problem than losing the user's permanent-delete action entirely.
+async function deleteCloudinaryImages(images) {
+    if (!images || images.length === 0) return;
+    const results = await Promise.allSettled(
+        images.map((img) => cloudinary.uploader.destroy(img.publicId))
+    );
+    results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+            console.error(`[hardDelete] Failed to delete Cloudinary image ${images[i].publicId}:`, r.reason);
+        }
+    });
+}
+
+module.exports = { uploadImage, deleteDocumentImage, deleteCloudinaryImages };

@@ -8,6 +8,7 @@ import type { DocumentSummary } from "@/types/document";
 import type { Folder } from "@/types/folder";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
+import { useRouter } from "next/navigation";
 
 interface Crumb {
     id: string;
@@ -122,8 +123,7 @@ function WorkspaceHomeContent() {
     const [memberActionPending, setMemberActionPending] = useState<string | null>(null);
     const [memberActionError, setMemberActionError] = useState<string | null>(null);
 
-    const { user } = useAuth();
-
+    const { user, updateDisplayName } = useAuth();
     const [showArchived, setShowArchived] = useState(false);
     const [archivedDocuments, setArchivedDocuments] = useState<DocumentSummary[]>([]);
     const [archivedLoading, setArchivedLoading] = useState(false);
@@ -131,7 +131,18 @@ function WorkspaceHomeContent() {
     const [restoringKey, setRestoringKey] = useState<string | null>(null);
     const [archivedFolders, setArchivedFolders] = useState<FolderWithParent[]>([]);   // was Folder[]   
 
+    const router = useRouter();
+    const [hardDeleteTarget, setHardDeleteTarget] = useState<{ type: ItemType | "workspace"; id: string; name: string } | null>(null);
+    const [hardDeleteConfirmText, setHardDeleteConfirmText] = useState("");
+    const [hardDeletePending, setHardDeletePending] = useState(false);
+    const [hardDeleteError, setHardDeleteError] = useState<string | null>(null);
 
+    const [workspaceName, setWorkspaceName] = useState("");
+
+    const [editingName, setEditingName] = useState(false);
+    const [nameInput, setNameInput] = useState("");
+    const [nameSaving, setNameSaving] = useState(false);
+    const [nameError, setNameError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -158,15 +169,16 @@ function WorkspaceHomeContent() {
             loadBreadcrumbs(),
             apiClient.get<{ role: "owner" | "editor" | "viewer" }>(`/api/workspaces/${workspaceId}/members/me`),
             apiClient.get<{ members: WorkspaceMemberEntry[] }>(`/api/workspaces/${workspaceId}/members`),
+            apiClient.get<{ workspace: { name: string } }>(`/api/workspaces/${workspaceId}`),
         ])
-            .then(([folderRes, docRes, trail, memberRes, membersListRes]) => {
+            .then(([folderRes, docRes, trail, memberRes, membersListRes,workspaceRes]) => {
                 setMembers(sortMembers(membersListRes.members));
                 if (!cancelled) {
                     setFolders(folderRes.folders);
                     setDocuments(docRes.documents);
                     setBreadcrumbs(trail);
                     setWorkspaceRole(memberRes.role);
-                    setMembers(membersListRes.members);
+                    setWorkspaceName(workspaceRes.workspace.name);
                 }
             })
             .catch((err) => {
@@ -314,7 +326,6 @@ function WorkspaceHomeContent() {
                 { email: inviteEmail.trim(), role: inviteRole }
             );
             setMembers((prev) => sortMembers([...prev, member]));
-            setMembers((prev) => [...prev, member]);
             setInviteSuccess(`${member.user.displayName} added as ${member.role}.`);
             setInviteEmail("");
         } catch (err) {
@@ -496,22 +507,34 @@ function WorkspaceHomeContent() {
                     <div key={f.id}>
                         <div className="row" style={{ marginLeft: depth * 20 }}>
                             <span>{f.name} <span className="muted">(folder)</span></span>
-                            <button className="btn-primary" disabled={restoringKey === keyFor("folder", f.id)} onClick={() => handleUnarchiveFolder(f.id, f.name)}>
-                                {restoringKey === keyFor("folder", f.id) ? "Restoring…" : "Restore"}
-                            </button>
+                            <span style={{ display: "flex", gap: "0.4rem" }}>
+                                <button className="btn-primary" disabled={restoringKey === keyFor("folder", f.id)} onClick={() => handleUnarchiveFolder(f.id, f.name)}>
+                                    {restoringKey === keyFor("folder", f.id) ? "Restoring…" : "Restore"}
+                                </button>
+                                <button className="btn-danger" onClick={() => openHardDeleteConfirm("folder", f.id, f.name)}>
+                                    Delete Permanently
+                                </button>
+                            </span>
                         </div>
                         {renderArchiveNode(f.id, childrenMap, depth + 1)}
                     </div>
                 ))}
+                
                 {node.documents.map((d) => (
                     <div key={d.id} className="row" style={{ marginLeft: depth * 20 }}>
                         <span><Link href={`/workspaces/${workspaceId}/archived/${d.id}`}>{d.title}</Link> <span className="muted">(document)</span></span>
-                        <button className="btn-primary" disabled={restoringKey === keyFor("document", d.id)} onClick={() => handleUnarchiveDocument(d.id, d.title)}>
-                            {restoringKey === keyFor("document", d.id) ? "Restoring…" : "Restore"}
-                        </button>
+                        <span style={{ display: "flex", gap: "0.4rem" }}>
+                            <button className="btn-primary" disabled={restoringKey === keyFor("document", d.id)} onClick={() => handleUnarchiveDocument(d.id, d.title)}>
+                                {restoringKey === keyFor("document", d.id) ? "Restoring…" : "Restore"}
+                            </button>
+                            <button className="btn-danger" onClick={() => openHardDeleteConfirm("document", d.id, d.title)}>
+                                Delete Permanently
+                            </button>
+                        </span>
                     </div>
                 ))}
             </>
+            
         );
     }
 
@@ -577,7 +600,7 @@ function WorkspaceHomeContent() {
             <span data-kebab-menu style={{ position: "relative", marginLeft: "0.5rem" }}>
                 <button onClick={() => toggleMenu(type, id)} style={{ padding: "0.15rem 0.5rem", border: "none" }}>⋮</button>
                 {openMenuKey === key && (
-                    <div style={{ position: "absolute", top: "1.9rem", right: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", minWidth: "120px", overflow: "hidden" }}>
+                    <div style={{ position: "absolute", top: "1.9rem", right: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", minWidth: "140px", overflow: "hidden" }}>
                         <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => startRename(type, id, label)}>Rename</button>
                         <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => openMovePicker(type, id)}>Move</button>
                         <button
@@ -588,6 +611,15 @@ function WorkspaceHomeContent() {
                         >
                             {actionPending === key ? "Archiving…" : "Archive"}
                         </button>
+                        {workspaceRole === "owner" && (
+                            <button
+                                className="btn-danger"
+                                style={{ border: "none", borderRadius: 0, textAlign: "left" }}
+                                onClick={() => openHardDeleteConfirm(type, id, label)}
+                            >
+                                Delete Permanently
+                            </button>
+                        )}
                     </div>
                 )}
             </span>
@@ -629,6 +661,70 @@ function WorkspaceHomeContent() {
 
     if (loading) return <p className="muted">Loading workspace…</p>;
 
+    function openHardDeleteConfirm(type: ItemType | "workspace", id: string, name: string) {
+        setOpenMenuKey(null);
+        setHardDeleteTarget({ type, id, name });
+        setHardDeleteConfirmText("");
+        setHardDeleteError(null);
+    }
+
+    function cancelHardDelete() {
+        setHardDeleteTarget(null);
+        setHardDeleteConfirmText("");
+        setHardDeleteError(null);
+    }
+
+    // Type-to-confirm rather than a plain confirm() dialog — this is
+    // irreversible and cascades (folders/workspace take everything inside
+    // them with them), so it deliberately requires more friction than a
+    // single click.
+    async function confirmHardDelete() {
+        if (!hardDeleteTarget || hardDeleteConfirmText !== hardDeleteTarget.name) return;
+
+        setHardDeletePending(true);
+        setHardDeleteError(null);
+
+        try {
+            if (hardDeleteTarget.type === "folder") {
+                await apiClient.delete(`/api/workspaces/${workspaceId}/folders/${hardDeleteTarget.id}/permanent`);
+                setFolders((prev) => prev.filter((f) => f.id !== hardDeleteTarget.id));
+                setArchivedFolders((prev) => prev.filter((f) => f.id !== hardDeleteTarget.id));
+            } else if (hardDeleteTarget.type === "document") {
+                await apiClient.delete(`/api/workspaces/${workspaceId}/documents/${hardDeleteTarget.id}/permanent`);
+                setDocuments((prev) => prev.filter((d) => d.id !== hardDeleteTarget.id));
+                setArchivedDocuments((prev) => prev.filter((d) => d.id !== hardDeleteTarget.id));
+            } else {
+                await apiClient.delete(`/api/workspaces/${workspaceId}/permanent`);
+                router.push("/workspaces");
+                return; // workspace itself is gone — nothing left to update locally
+            }
+            setHardDeleteTarget(null);
+        } catch (err) {
+            setHardDeleteError(err instanceof ApiError ? err.message : "Failed to permanently delete.");
+        } finally {
+            setHardDeletePending(false);
+        }
+    }
+
+    async function handleSaveName() {
+        const trimmed = nameInput.trim();
+        if (!trimmed) return;
+
+        setNameSaving(true);
+        setNameError(null);
+        try {
+            await updateDisplayName(trimmed);
+            // Reflect the new name in the member list too — AuthContext's
+            // user object updates automatically, but the rendered row reads
+            // from the separately-fetched `members` array, not from `user`.
+            setMembers((prev) => sortMembers(prev.map((m) => (m.user.id === user?.id ? { ...m, user: { ...m.user, displayName: trimmed } } : m))));
+            setEditingName(false);
+        } catch (err) {
+            setNameError(err instanceof ApiError ? err.message : "Failed to update name.");
+        } finally {
+            setNameSaving(false);
+        }
+    }
     return (
         <div style={{ maxWidth: "680px", margin: "0 auto", padding: "3.5rem 1.5rem" }}>
             <p className="muted" style={{ marginBottom: "0.5rem" }}>
@@ -660,10 +756,44 @@ function WorkspaceHomeContent() {
                     const isSelf = m.user.id === user?.id;
                     return (
                         <div key={m.memberId} className="row">
-                            <span>
-                                {m.user.displayName} <span className="muted">({m.user.email})</span>
-                                {isSelf && <span className="muted"> — you</span>}
-                            </span>
+                            {isSelf && editingName ? (
+                                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                                    <input
+                                        type="text"
+                                        value={nameInput}
+                                        onChange={(e) => setNameInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") handleSaveName();
+                                            if (e.key === "Escape") setEditingName(false);
+                                        }}
+                                        autoFocus
+                                        style={{ fontSize: "14px" }}
+                                    />
+                                    <button className="btn-primary" disabled={nameSaving} onClick={handleSaveName}>
+                                        {nameSaving ? "Saving…" : "Save"}
+                                    </button>
+                                    <button onClick={() => setEditingName(false)} disabled={nameSaving}>Cancel</button>
+                                </span>
+                            ): (
+                                <span>
+                                    {m.user.displayName} <span className="muted">({m.user.email})</span>
+                                    {isSelf && (
+                                        <>
+                                            <span className="muted"> — you</span>{" "}
+                                            <button
+                                                onClick={() => {
+                                                    setNameInput(m.user.displayName ?? "");
+                                                    setEditingName(true);
+                                                    setNameError(null);
+                                                }}
+                                                style={{ fontSize: "11px", padding: "1px 6px", border: "none" }}
+                                            >
+                                                edit
+                                            </button>
+                                        </>
+                                    )}
+                                </span>
+                            )}
                             <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                                 {workspaceRole === "owner" && !isSelf ? (
                                     <select
@@ -702,6 +832,8 @@ function WorkspaceHomeContent() {
                     );
                 })}
             </div>
+            {nameError && <p className="error-text">{nameError}</p>}
+
             {workspaceRole === "owner" && (
                 <form onSubmit={handleInvite} style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
                     <input
@@ -821,9 +953,59 @@ function WorkspaceHomeContent() {
                     {creatingDoc ? "Creating…" : "Create document"}
                 </button>
             </form>
+
+            {workspaceRole === "owner" && (
+                <div style={{ marginTop: "3rem", padding: "1rem", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)" }}>
+                    <p className="section-label" style={{ color: "var(--danger)" }}>Danger Zone</p>
+                    <p className="muted" style={{ fontSize: "13px" }}>
+                        Permanently delete this entire workspace, including all folders, documents, and members. This cannot be undone.
+                    </p>
+                    <button
+                        className="btn-danger"
+                        onClick={() => openHardDeleteConfirm("workspace", workspaceId, workspaceName)}
+                    >
+                        Delete Workspace Permanently
+                    </button>
+                </div>
+            )}
+
+            {hardDeleteTarget && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+                    <div style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", padding: "1.5rem", maxWidth: "420px", width: "90%" }}>
+                        <h3 style={{ marginTop: 0 }}>Permanently delete {hardDeleteTarget.type}?</h3>
+                        <p className="muted">
+                            This cannot be undone.
+                            {hardDeleteTarget.type === "folder" && " All documents and subfolders inside will also be permanently deleted."}
+                            {hardDeleteTarget.type === "workspace" && " Every folder, document, and member in this workspace will be permanently deleted."}
+                        </p>
+                        <p>
+                            Type <strong>{hardDeleteTarget.name}</strong> to confirm:
+                        </p>
+                        <input
+                            type="text"
+                            value={hardDeleteConfirmText}
+                            onChange={(e) => setHardDeleteConfirmText(e.target.value)}
+                            style={{ width: "100%", marginBottom: "0.75rem" }}
+                            autoFocus
+                        />
+                        {hardDeleteError && <p className="error-text">{hardDeleteError}</p>}
+                        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                            <button onClick={cancelHardDelete} disabled={hardDeletePending}>Cancel</button>
+                            <button
+                                className="btn-danger"
+                                disabled={hardDeleteConfirmText !== hardDeleteTarget.name || hardDeletePending}
+                                onClick={confirmHardDelete}
+                            >
+                                {hardDeletePending ? "Deleting…" : "Delete Permanently"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
+
 
 export default function WorkspaceHomePage() {
     return (

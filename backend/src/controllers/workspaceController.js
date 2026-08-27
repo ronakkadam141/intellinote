@@ -1,7 +1,9 @@
 const mongoose=require('mongoose');
 const Workspace = require('../models/Workspace');
 const WorkspaceMember = require('../models/WorkspaceMember');
-
+const Document = require('../models/Document');
+const Folder = require('../models/Folder');
+const { deleteCloudinaryImages } = require('./imageController');
 /*
 slug generator 
 Instead of URLs like: /workspaces/685f8c3a4d2b7e91
@@ -307,10 +309,77 @@ const archiveWorkspace = async(req,res,next)=>{
     }
 };
 
+/*
+ HARD DELETE WORKSPACE
+
+ Permanently deletes the workspace and everything in it: every folder,
+ every document (active or archived) and their Cloudinary images, every
+ membership record, then the workspace itself. No archive step required —
+ owner can go straight to permanent deletion, per product decision.
+ Fully irreversible.
+*/
+const hardDeleteWorkspace = async (req, res, next) => {
+    const session = await mongoose.startSession();
+    try {
+        const { workspaceId } = req.params;
+
+        let imagesToClean = [];
+        let deletedDocumentCount = 0;
+        let deletedFolderCount = 0;
+
+        await session.withTransaction(async () => {
+            const workspace = await Workspace.findById(workspaceId).session(session);
+
+            if (!workspace) {
+                const err = new Error('Workspace not found.');
+                err.statusCode = 404;
+                err.code = 'WORKSPACE_NOT_FOUND';
+                throw err;
+            }
+
+            const documents = await Document.find({ workspaceId }).select('images').session(session).lean();
+            imagesToClean = documents.flatMap((d) => d.images || []);
+            deletedDocumentCount = documents.length;
+
+            const folderResult = await Folder.deleteMany({ workspaceId }, { session });
+            deletedFolderCount = folderResult.deletedCount;
+
+            await Document.deleteMany({ workspaceId }, { session });
+            await WorkspaceMember.deleteMany({ workspaceId }, { session });
+            await Workspace.deleteOne({ _id: workspaceId }, { session });
+        });
+
+        deleteCloudinaryImages(imagesToClean).catch((err) =>
+            console.error('[hardDeleteWorkspace] Cloudinary cleanup error:', err)
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                message: 'Workspace and all its contents permanently deleted.',
+                workspaceId,
+                deletedFolderCount,
+                deletedDocumentCount,
+            },
+        });
+    } catch (err) {
+        if (err.statusCode === 404) {
+            return res.status(404).json({
+                success: false,
+                error: { code: err.code, message: err.message },
+            });
+        }
+        return next(err);
+    } finally {
+        session.endSession();
+    }
+};
+
 module.exports = {
     createWorkspace,
     getMyWorkspaces,
     getWorkspaceById,
     updateWorkspace,
     archiveWorkspace,
+    hardDeleteWorkspace,
 };

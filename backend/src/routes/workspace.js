@@ -7,6 +7,7 @@ const {
     getWorkspaceById,
     updateWorkspace,
     archiveWorkspace,
+    hardDeleteWorkspace,
 } = require('../controllers/workspaceController');
 
 const {authenticate}=require('../middleware/auth');
@@ -25,5 +26,5 @@ router.get('/:workspaceId',authenticate,requireWorkspaceAccess,getWorkspaceById)
 // workspace scoped:owner only 
 router.patch('/:workspaceId',authenticate,requireWorkspaceAccess,requireWorkspaceRole('owner'),updateWorkspaceValidator,validate,updateWorkspace);
 router.delete('/:workspaceId',authenticate,requireWorkspaceAccess,requireWorkspaceRole('owner'),archiveWorkspace);
-
+router.delete('/:workspaceId/permanent', authenticate, requireWorkspaceAccess, requireWorkspaceRole('owner'), hardDeleteWorkspace);
 module.exports=router;

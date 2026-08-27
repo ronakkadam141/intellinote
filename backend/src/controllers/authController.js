@@ -3,14 +3,20 @@ const bcrypt=require("bcrypt")
 const jwt= require ("jsonwebtoken");
 const env = require('../config/env')
 
-// Generates a friendly, always-non-null default name for accounts that
-// don't provide one at signup — e.g. "User-4821". Not guaranteed globally
-// unique (displayName has no unique constraint in the schema), which is
-// fine: it's a display label, not an identifier. Purely eliminates the
-// null-displayName class of bug at the source.
-function generateDisplayName() {
-    const suffix = Math.floor(1000 + Math.random() * 9000); // 4-digit, no leading zero
-    return `User-${suffix}`;
+// Generates a friendly default name and guarantees it's actually unique
+// in the DB before returning it — required now that displayName has a
+// unique index. Retries with a fresh random suffix on collision; falls
+// back to a much larger random range after a few attempts as a safety
+// net against pathological bad luck.
+async function generateDisplayName() {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const suffix = Math.floor(1000 + Math.random() * 9000);
+        const candidate = `User-${suffix}`;
+        const exists = await User.exists({ displayName: candidate });
+        if (!exists) return candidate;
+    }
+    // Extremely unlikely fallback: much larger space, effectively collision-free
+    return `User-${Math.floor(100000 + Math.random() * 900000)}`;
 }
 
 function signToken(user){
@@ -49,9 +55,7 @@ const register = async(req,res,next) =>{
         const newUser= await User.create({
             email: email.toLowerCase().trim(),
             passwordHash,
-            // Always non-null now: use what they typed, trimmed, or fall
-            // back to a generated name. Never store null/empty again.
-            displayName: displayName?.trim() || generateDisplayName(),
+            displayName: displayName?.trim() || await generateDisplayName(),
         });
         
         const token = signToken(newUser);
@@ -152,6 +156,23 @@ const updateDisplayName = async (req, res, next) => {
             return res.status(400).json({
                 success: false,
                 error: { code: 'INVALID_NAME', message: 'Display name cannot be empty.' },
+            });
+        }
+
+        // Pre-check for uniqueness before attempting the write — gives a
+        // clean, expected error instead of a raw Mongo duplicate-key
+        // exception surfacing as a generic 500. Excludes the user's own
+        // current record so re-saving your own unchanged name doesn't
+        // falsely collide with yourself.
+        const existing = await User.findOne({
+            displayName: trimmed,
+            _id: { $ne: req.user.id },
+        });
+
+        if (existing) {
+            return res.status(409).json({
+                success: false,
+                error: { code: 'DISPLAY_NAME_TAKEN', message: 'That display name is already in use.' },
             });
         }
 

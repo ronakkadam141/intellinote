@@ -12,6 +12,15 @@ interface AuthContextValue{
     logout:()=> void;
 }
 
+interface AuthContextValue{
+    user:User|null;
+    loading:boolean;
+    login:(email:string, password:string)=> Promise<void>;
+    register:(email:string,password:string,displayName?:string) =>Promise<void>;
+    logout:()=> void;
+    updateDisplayName:(displayName:string)=> Promise<void>;
+}
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({children} : {children :ReactNode}){
@@ -69,8 +78,16 @@ export function AuthProvider({children} : {children :ReactNode}){
         setUser(null);
     }
 
+    async function updateDisplayName(displayName: string) {
+        const { user: updatedUser } = await apiClient.patch<{ user: User }>(
+            "/api/auth/me/display-name",
+            { displayName }
+        );
+        setUser(updatedUser);
+    }
+
     return (
-        <AuthContext.Provider value={{user,loading,login,register,logout}}>{children}</AuthContext.Provider>
+        <AuthContext.Provider value={{user,loading,login,register,logout,updateDisplayName}}>{children}</AuthContext.Provider>
     );
 }
 

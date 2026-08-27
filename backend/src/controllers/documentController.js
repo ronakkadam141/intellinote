@@ -3,6 +3,7 @@ const mongoose=require('mongoose');
 const Document=require('../models/Document');
 const Folder=require('../models/Folder');
 const {createTicket} = require('../lib/wsTicketStore')
+const { deleteCloudinaryImages } = require('./imageController');
 
 /**
  * Every new document starts with an empty document not null or empty object 
@@ -740,6 +741,45 @@ const issueWsTicket = async (req, res, next) => {
         return next(err);
     }
 };
+/*
+ HARD DELETE DOCUMENT
+
+ Permanently removes a document and its Cloudinary images. Works on
+ active OR archived documents — no isArchived filter — since hard delete
+ is meant to work directly on active items too, per product decision.
+ Irreversible: no soft-delete fallback after this point.
+*/
+const hardDeleteDocument = async (req, res, next) => {
+    try {
+        const { workspaceId, documentId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(documentId)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'INVALID_ID', message: 'Invalid document ID format.' },
+            });
+        }
+
+        const document = await Document.findOne({ _id: documentId, workspaceId });
+
+        if (!document) {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'DOCUMENT_NOT_FOUND', message: 'Document not found.' },
+            });
+        }
+
+        await deleteCloudinaryImages(document.images);
+        await Document.deleteOne({ _id: documentId, workspaceId });
+
+        return res.status(200).json({
+            success: true,
+            data: { message: 'Document permanently deleted.', documentId },
+        });
+    } catch (err) {
+        return next(err);
+    }
+};
 
 module.exports={
     createDocument,
@@ -752,4 +792,5 @@ module.exports={
     unarchiveDocument,
     getArchivedItems,
     getArchivedDocumentById,
+    hardDeleteDocument,
 };
