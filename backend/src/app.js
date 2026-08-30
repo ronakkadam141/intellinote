@@ -12,8 +12,21 @@ const imageRoutes = require('./routes/images')
 const workspaceMembersRoutes= require('./routes/workspaceMembers');
 const app = express();
 
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_URL,
+  'https://intellinote-five.vercel.app',
+  'http://localhost:3000',
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // requests with no origin (curl, server-to-server, some mobile clients) are allowed
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    }
+  },
   credentials: true,
 }));
 app.use(express.json({limit:'10mb'}));
