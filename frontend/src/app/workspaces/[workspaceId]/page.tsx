@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, SyntheticEvent } from "react";
+import { useEffect, useState, SyntheticEvent,useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import RequireAuth from "@/components/RequireAuth";
 import { apiClient, ApiError } from "@/lib/apiClient";
@@ -41,12 +41,33 @@ interface WorkspaceMemberEntry {
 interface ArchiveChildren {
     folders: FolderWithParent[];
     documents: DocumentSummary[];
-    
+
 }
 type ItemType = "folder" | "document";
 
 function keyFor(type: ItemType, id: string) {
     return `${type}:${id}`;
+}
+
+function FolderIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <path d="M2 4.3C2 3.6 2.6 3 3.3 3H6.3L7.6 4.5H12.7C13.4 4.5 14 5.1 14 5.8V11.2C14 11.9 13.4 12.5 12.7 12.5H3.3C2.6 12.5 2 11.9 2 11.2V4.3Z" />
+        </svg>
+    );
+}
+function DocIcon() {
+    return (
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <path d="M4 2.5H9.3L12 5.2V13.5H4V2.5Z" />
+            <path d="M9.1 2.5V5.2H11.8" />
+        </svg>
+    );
+}
+const AVATAR_COLORS = ["#C77B3F", "#8FA876", "#5B8AA6"];
+function memberInitials(name: string): string {
+    const words = name.trim().split(/\s+/);
+    return words.length >= 2 ? (words[0][0] + words[1][0]).toUpperCase() : name.slice(0, 2).toUpperCase();
 }
 
 async function fetchAllFoldersFlat(workspaceId: string): Promise<FolderTreeNode[]> {
@@ -144,6 +165,9 @@ function WorkspaceHomeContent() {
     const [nameSaving, setNameSaving] = useState(false);
     const [nameError, setNameError] = useState<string | null>(null);
 
+    const [addMenuOpen, setAddMenuOpen] = useState(false);
+    const [creatingType, setCreatingType] = useState<"folder" | "document" | null>(null);
+    const addMenuRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => {
         let cancelled = false;
 
@@ -171,7 +195,7 @@ function WorkspaceHomeContent() {
             apiClient.get<{ members: WorkspaceMemberEntry[] }>(`/api/workspaces/${workspaceId}/members`),
             apiClient.get<{ workspace: { name: string } }>(`/api/workspaces/${workspaceId}`),
         ])
-            .then(([folderRes, docRes, trail, memberRes, membersListRes,workspaceRes]) => {
+            .then(([folderRes, docRes, trail, memberRes, membersListRes, workspaceRes]) => {
                 setMembers(sortMembers(membersListRes.members));
                 if (!cancelled) {
                     setFolders(folderRes.folders);
@@ -206,6 +230,16 @@ function WorkspaceHomeContent() {
         document.addEventListener("mousedown", handleDocMouseDown);
         return () => document.removeEventListener("mousedown", handleDocMouseDown);
     }, [openMenuKey]);
+
+    useEffect(() => {
+        function handleAddMenuOutside(e: MouseEvent) {
+            if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) {
+                setAddMenuOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleAddMenuOutside);
+        return () => document.removeEventListener("mousedown", handleAddMenuOutside);
+    }, []);
 
     async function handleCreateFolder(e: SyntheticEvent<HTMLFormElement>) {
         e.preventDefault();
@@ -468,7 +502,7 @@ function WorkspaceHomeContent() {
     }
 
     async function loadArchivedItems() {
-        
+
         setArchivedLoading(true);
         setArchivedError(null);
         try {
@@ -505,36 +539,45 @@ function WorkspaceHomeContent() {
             <>
                 {node.folders.map((f) => (
                     <div key={f.id}>
-                        <div className="row" style={{ marginLeft: depth * 20 }}>
-                            <span>{f.name} <span className="muted">(folder)</span></span>
-                            <span style={{ display: "flex", gap: "0.4rem" }}>
-                                <button className="btn-primary" disabled={restoringKey === keyFor("folder", f.id)} onClick={() => handleUnarchiveFolder(f.id, f.name)}>
+                        <div className="archive-row" style={{ marginLeft: depth * 16 }}>
+                            <span className="archive-row-name">{f.name} <span className="muted">folder</span></span>
+                            <span className="archive-row-actions">
+                                <button
+                                    className="text-action"
+                                    disabled={restoringKey === keyFor("folder", f.id)}
+                                    onClick={() => handleUnarchiveFolder(f.id, f.name)}
+                                >
                                     {restoringKey === keyFor("folder", f.id) ? "Restoring…" : "Restore"}
                                 </button>
-                                <button className="btn-danger" onClick={() => openHardDeleteConfirm("folder", f.id, f.name)}>
-                                    Delete Permanently
+                                <button className="text-action text-action-danger" onClick={() => openHardDeleteConfirm("folder", f.id, f.name)}>
+                                    Delete permanently
                                 </button>
                             </span>
                         </div>
                         {renderArchiveNode(f.id, childrenMap, depth + 1)}
                     </div>
                 ))}
-                
+
                 {node.documents.map((d) => (
-                    <div key={d.id} className="row" style={{ marginLeft: depth * 20 }}>
-                        <span><Link href={`/workspaces/${workspaceId}/archived/${d.id}`}>{d.title}</Link> <span className="muted">(document)</span></span>
-                        <span style={{ display: "flex", gap: "0.4rem" }}>
-                            <button className="btn-primary" disabled={restoringKey === keyFor("document", d.id)} onClick={() => handleUnarchiveDocument(d.id, d.title)}>
+                    <div key={d.id} className="archive-row" style={{ marginLeft: depth * 16 }}>
+                        <span className="archive-row-name">
+                            <Link href={`/workspaces/${workspaceId}/archived/${d.id}`}>{d.title}</Link> <span className="muted">document</span>
+                        </span>
+                        <span className="archive-row-actions">
+                            <button
+                                className="text-action"
+                                disabled={restoringKey === keyFor("document", d.id)}
+                                onClick={() => handleUnarchiveDocument(d.id, d.title)}
+                            >
                                 {restoringKey === keyFor("document", d.id) ? "Restoring…" : "Restore"}
                             </button>
-                            <button className="btn-danger" onClick={() => openHardDeleteConfirm("document", d.id, d.title)}>
-                                Delete Permanently
+                            <button className="text-action text-action-danger" onClick={() => openHardDeleteConfirm("document", d.id, d.title)}>
+                                Delete permanently
                             </button>
                         </span>
                     </div>
                 ))}
             </>
-            
         );
     }
 
@@ -597,26 +640,26 @@ function WorkspaceHomeContent() {
         if (renamingKey === key) return null;
 
         return (
-            <span data-kebab-menu style={{ position: "relative", marginLeft: "0.5rem" }}>
-                <button onClick={() => toggleMenu(type, id)} style={{ padding: "0.15rem 0.5rem", border: "none" }}>⋮</button>
+            <span data-kebab-menu style={{ position: "relative" }}>
+                <button
+                    onClick={() => toggleMenu(type, id)}
+                    className={`kebab-btn ${openMenuKey === key ? "is-open" : ""}`}
+                >
+                    ⋮
+                </button>
                 {openMenuKey === key && (
-                    <div style={{ position: "absolute", top: "1.9rem", right: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", minWidth: "140px", overflow: "hidden" }}>
-                        <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => startRename(type, id, label)}>Rename</button>
-                        <button style={{ border: "none", borderRadius: 0, textAlign: "left" }} onClick={() => openMovePicker(type, id)}>Move</button>
+                    <div className="item-menu">
+                        <button onClick={() => startRename(type, id, label)}>Rename</button>
+                        <button onClick={() => openMovePicker(type, id)}>Move</button>
                         <button
                             className="btn-danger"
-                            style={{ border: "none", borderRadius: 0, textAlign: "left" }}
                             onClick={() => handleArchive(type, id, label)}
                             disabled={actionPending === key}
                         >
                             {actionPending === key ? "Archiving…" : "Archive"}
                         </button>
                         {workspaceRole === "owner" && (
-                            <button
-                                className="btn-danger"
-                                style={{ border: "none", borderRadius: 0, textAlign: "left" }}
-                                onClick={() => openHardDeleteConfirm(type, id, label)}
-                            >
+                            <button className="btn-danger" onClick={() => openHardDeleteConfirm(type, id, label)}>
                                 Delete Permanently
                             </button>
                         )}
@@ -631,7 +674,7 @@ function WorkspaceHomeContent() {
         if (movingKey !== key) return null;
 
         return (
-            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginLeft: "0.5rem" }}>
+            <div className="move-picker">
                 {moveLoading || !moveOptions ? (
                     <span className="muted">Loading folders…</span>
                 ) : (
@@ -645,14 +688,7 @@ function WorkspaceHomeContent() {
                             ))}
                         </select>
                         <button className="btn-primary" onClick={() => confirmMove(type, id)}>Confirm</button>
-                        <button
-                            onClick={() => {
-                                setMovingKey(null);
-                                setMoveOptions(null);
-                            }}
-                        >
-                            Cancel
-                        </button>
+                        <button onClick={() => { setMovingKey(null); setMoveOptions(null); }}>Cancel</button>
                     </>
                 )}
             </div>
@@ -726,283 +762,330 @@ function WorkspaceHomeContent() {
         }
     }
     return (
-        <div style={{ maxWidth: "680px", margin: "0 auto", padding: "3.5rem 1.5rem" }}>
-            <p className="muted" style={{ marginBottom: "0.5rem" }}>
-                <Link href="/workspaces">← All workspaces</Link>
-            </p>
 
-            <h1>Workspace</h1>
-            {error && <p className="error-text">{error}</p>}
+        <div className="page-container">
+            <div className="page-container">
+                <Link href="/workspaces" className="back-link">← All workspaces</Link>
 
-            {activeFolderId && (
-                <p className="muted" style={{ marginTop: "0.5rem" }}>
-                    <a href={`/workspaces/${workspaceId}`}>Root</a>
-                    {breadcrumbs.map((crumb, index) => {
-                        const isCurrent = index === breadcrumbs.length - 1;
-                        return (
-                            <span key={crumb.id}>
-                                {" "}/{" "}
-                                {isCurrent ? crumb.name : <a href={`/workspaces/${workspaceId}?folderId=${crumb.id}`}>{crumb.name}</a>}
-                            </span>
-                        );
-                    })}
-                </p>
-            )}
+                <h1 style={{ marginTop: "0.6rem" }}>{workspaceName || "Workspace"}</h1>
+                {error && <p className="error-text">{error}</p>}
 
-            <p className="section-label">Members</p>
-            {memberActionError && <p className="error-text">{memberActionError}</p>}
-            <div style={{ marginBottom: "0.75rem" }}>
-                {members.map((m) => {
-                    const isSelf = m.user.id === user?.id;
-                    return (
-                        <div key={m.memberId} className="row">
-                            {isSelf && editingName ? (
-                                <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                                    <input
-                                        type="text"
-                                        value={nameInput}
-                                        onChange={(e) => setNameInput(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === "Enter") handleSaveName();
-                                            if (e.key === "Escape") setEditingName(false);
-                                        }}
-                                        autoFocus
-                                        style={{ fontSize: "14px" }}
-                                    />
-                                    <button className="btn-primary" disabled={nameSaving} onClick={handleSaveName}>
-                                        {nameSaving ? "Saving…" : "Save"}
-                                    </button>
-                                    <button onClick={() => setEditingName(false)} disabled={nameSaving}>Cancel</button>
-                                </span>
-                            ): (
-                                <span>
-                                    {m.user.displayName} <span className="muted">({m.user.email})</span>
-                                    {isSelf && (
-                                        <>
-                                            <span className="muted"> — you</span>{" "}
-                                            <button
-                                                onClick={() => {
-                                                    setNameInput(m.user.displayName ?? "");
-                                                    setEditingName(true);
-                                                    setNameError(null);
-                                                }}
-                                                style={{ fontSize: "11px", padding: "1px 6px", border: "none" }}
-                                            >
-                                                edit
-                                            </button>
-                                        </>
+                {activeFolderId && (
+                    <div className="breadcrumb" style={{ marginTop: "0.5rem" }}>
+                        <a href={`/workspaces/${workspaceId}`} className="breadcrumb-link">Root</a>
+                        {breadcrumbs.map((crumb, index) => {
+                            const isCurrent = index === breadcrumbs.length - 1;
+                            return (
+                                <span key={crumb.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                                    <span className="breadcrumb-sep">›</span>
+                                    {isCurrent ? (
+                                        <span className="breadcrumb-current">{crumb.name}</span>
+                                    ) : (
+                                        <a href={`/workspaces/${workspaceId}?folderId=${crumb.id}`} className="breadcrumb-link">{crumb.name}</a>
                                     )}
                                 </span>
-                            )}
-                            <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                                {workspaceRole === "owner" && !isSelf ? (
-                                    <select
-                                        value={m.role}
-                                        disabled={memberActionPending === m.memberId}
-                                        onChange={(e) =>
-                                            handleChangeRole(m.memberId, e.target.value as "owner" | "editor" | "viewer")
-                                        }
-                                        style={{
-                                            background: "var(--surface)",
-                                            color: "var(--text)",
-                                            border: "1px solid var(--border-strong)",
-                                            borderRadius: "4px",
-                                            padding: "0.25rem 0.4rem",
-                                            fontSize: "13px",
-                                        }}
-                                    >
-                                        <option value="owner">Owner</option>
-                                        <option value="editor">Editor</option>
-                                        <option value="viewer">Viewer</option>
-                                    </select>
-                                ) : (
-                                    <span className="muted">{m.role}</span>
-                                )}
-                                {workspaceRole === "owner" && !isSelf && m.role !== "owner" && (
-                                    <button
-                                        className="btn-danger"
-                                        disabled={memberActionPending === m.memberId}
-                                        onClick={() => handleRemoveMember(m.memberId, m.user.displayName)}
-                                    >
-                                        {memberActionPending === m.memberId ? "…" : "Remove"}
-                                    </button>
-                                )}
+                            );
+                        })}
+                    </div>
+                )}
+
+                <p className="section-label" style={{ marginTop: 0 }}>Members</p>
+                {memberActionError && <p className="error-text">{memberActionError}</p>}
+                <div style={{ marginBottom: "0.5rem" }}>
+                    {members.map((m, i) => {
+                        const isSelf = m.user.id === user?.id;
+                        return (
+                            <div key={m.memberId} className="row">
+                                <span className="member-left">
+                                        <span className="avatar-circle" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+                                            {memberInitials(m.user.displayName || m.user.email)}
+                                        </span>
+                                    {isSelf && editingName ? (
+                                        <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                                            <input
+                                                type="text"
+                                                value={nameInput}
+                                                onChange={(e) => setNameInput(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter") handleSaveName();
+                                                    if (e.key === "Escape") setEditingName(false);
+                                                }}
+                                                autoFocus
+                                                style={{ fontSize: "14px" }}
+                                            />
+                                            <button className="btn-primary" disabled={nameSaving} onClick={handleSaveName}>
+                                                {nameSaving ? "Saving…" : "Save"}
+                                            </button>
+                                            <button onClick={() => setEditingName(false)} disabled={nameSaving}>Cancel</button>
+                                        </span>
+                                    ) : (
+                                        <span>
+                                            {m.user.displayName} <span className="muted">({m.user.email})</span>
+                                            {isSelf && (
+                                                <>
+                                                    <span className="muted"> — you</span>{" "}
+                                                    <button
+                                                        onClick={() => {
+                                                            setNameInput(m.user.displayName ?? "");
+                                                            setEditingName(true);
+                                                            setNameError(null);
+                                                        }}
+                                                        className="back-link"
+                                                        style={{ fontSize: "11px", padding: "1px 6px" }}
+                                                    >
+                                                        edit
+                                                    </button>
+                                                </>
+                                            )}
+                                        </span>
+                                    )}
+                                    <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                                        {workspaceRole === "owner" && !isSelf ? (
+                                            <select
+                                                value={m.role}
+                                                disabled={memberActionPending === m.memberId}
+                                                onChange={(e) => handleChangeRole(m.memberId, e.target.value as "owner" | "editor" | "viewer")}
+                                                style={{
+                                                    background: "var(--surface)",
+                                                    color: "var(--text)",
+                                                    border: "1px solid var(--border-strong)",
+                                                    borderRadius: "4px",
+                                                    padding: "0.25rem 0.4rem",
+                                                    fontSize: "13px",
+                                                }}
+                                            >
+                                                <option value="owner">Owner</option>
+                                                <option value="editor">Editor</option>
+                                                <option value="viewer">Viewer</option>
+                                            </select>
+                                        ) : (
+                                            <span className={`role-badge role-${m.role}`}>{m.role}</span>
+                                        )}
+                                        {workspaceRole === "owner" && !isSelf && m.role !== "owner" && (
+                                            <button
+                                                className="text-action text-action-danger row-reveal"
+                                                disabled={memberActionPending === m.memberId}
+                                                onClick={() => handleRemoveMember(m.memberId, m.user.displayName)}
+                                            >
+                                                {memberActionPending === m.memberId ? "…" : "Remove"}
+                                            </button>
+                                        )}
+                                </span>
                             </span>
-                        </div>
-                    );
-                })}
-            </div>
-            {nameError && <p className="error-text">{nameError}</p>}
-
-            {workspaceRole === "owner" && (
-                <form onSubmit={handleInvite} style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
-                    <input
-                        type="email"
-                        placeholder="Invite by email"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        style={{ flex: 1 }}
-                        required
-                    />
-                    <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as "editor" | "viewer")}>
-                        <option value="editor">Editor</option>
-                        <option value="viewer">Viewer</option>
-                    </select>
-                    <button type="submit" className="btn-primary" disabled={inviting}>
-                        {inviting ? "Inviting…" : "Invite"}
-                    </button>
-                </form>
-            )}
-            {inviteError && <p className="error-text">{inviteError}</p>}
-            {inviteSuccess && <p className="muted">{inviteSuccess}</p>}
-
-            <p className="section-label">Folders</p>
-            {folders.length === 0 ? (
-                <div className="callout">
-                    <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "15px" }}>No folders here yet</p>
-                    <p className="muted" style={{ margin: 0 }}>
-                        Folders keep related documents organized — create one below to get started.
-                    </p>
+                            </div>
+                        );
+                    })}
                 </div>
-            ) : (
-                <div>
-                    {folders.map((f) => (
-                        <div key={f.id} className="row">
-                            <span style={{ display: "flex", alignItems: "center" }}>
-                                {renderNameOrInput("folder", f.id, f.name, `/workspaces/${workspaceId}?folderId=${f.id}`)}
-                            </span>
-                            <span style={{ display: "flex", alignItems: "center" }}>
-                                {renderMovePicker("folder", f.id)}
-                                {renderActions("folder", f.id, f.name)}
-                            </span>
-                        </div>
-                    ))}
-                </div>
-            )}
-            {workspaceRole === "owner" && (
-                <>
-                    <button onClick={toggleArchivedView} style={{ marginBottom: "0.75rem" }}>
-                        {showArchived ? "Hide archived items" : "View archived items"}
-                    </button>
+                {nameError && <p className="error-text">{nameError}</p>}
 
-                    {showArchived && (
-                        <div style={{ marginBottom: "1.5rem", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "1rem" }}>
-                            <p className="section-label" style={{ marginTop: 0 }}>Archived</p>
-                            {archivedError && <p className="error-text">{archivedError}</p>}
-                            {archivedLoading ? (
-                                <p className="muted">Loading archived items…</p>
-                            ) : archivedFolders.length === 0 && archivedDocuments.length === 0 ? (
-                                <p className="muted">Nothing archived.</p>
-                            ) : (
-                                <>
-                                    {renderArchiveNode("root", buildArchiveChildren(archivedFolders, archivedDocuments), 0)}                                </>
-                            )}
-                        </div>
-                    )}
-                </>
-            )}
-            <form onSubmit={handleCreateFolder} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
-                <input
-                    type="text"
-                    placeholder="New folder name"
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    style={{ flex: 1 }}
-                    required
-                />
-                <button type="submit" className="btn-primary" disabled={creatingFolder}>
-                    {creatingFolder ? "Creating…" : "Create folder"}
-                </button>
-            </form>
-
-            <p className="section-label">Documents</p>
-            {documents.length === 0 ? (
-                <div className="callout">
-                    <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "15px" }}>No documents here yet</p>
-                    <p className="muted" style={{ margin: 0 }}>
-                        This is where your notes live — create your first document below.
-                    </p>
-                </div>
-            ) : (
-                <div>
-                    {documents.map((d) => (
-                        <div key={d.id} className="row">
-                            <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                                {renderNameOrInput("document", d.id, d.title, `/workspaces/${workspaceId}/documents/${d.id}`)}
-                                {d.isPinned && <span className="muted" style={{ fontSize: "11px" }}>pinned</span>}
-                            </span>
-                            <span style={{ display: "flex", alignItems: "center" }}>
-                                {renderMovePicker("document", d.id)}
-                                {renderActions("document", d.id, d.title)}
-                            </span>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            <form onSubmit={handleCreateDocument} style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
-                <input
-                    type="text"
-                    placeholder="New document title"
-                    value={newDocTitle}
-                    onChange={(e) => setNewDocTitle(e.target.value)}
-                    style={{ flex: 1 }}
-                    required
-                />
-                <button type="submit" className="btn-primary" disabled={creatingDoc}>
-                    {creatingDoc ? "Creating…" : "Create document"}
-                </button>
-            </form>
-
-            {workspaceRole === "owner" && (
-                <div style={{ marginTop: "3rem", padding: "1rem", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)" }}>
-                    <p className="section-label" style={{ color: "var(--danger)" }}>Danger Zone</p>
-                    <p className="muted" style={{ fontSize: "13px" }}>
-                        Permanently delete this entire workspace, including all folders, documents, and members. This cannot be undone.
-                    </p>
-                    <button
-                        className="btn-danger"
-                        onClick={() => openHardDeleteConfirm("workspace", workspaceId, workspaceName)}
-                    >
-                        Delete Workspace Permanently
-                    </button>
-                </div>
-            )}
-
-            {hardDeleteTarget && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-                    <div style={{ background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", padding: "1.5rem", maxWidth: "420px", width: "90%" }}>
-                        <h3 style={{ marginTop: 0 }}>Permanently delete {hardDeleteTarget.type}?</h3>
-                        <p className="muted">
-                            This cannot be undone.
-                            {hardDeleteTarget.type === "folder" && " All documents and subfolders inside will also be permanently deleted."}
-                            {hardDeleteTarget.type === "workspace" && " Every folder, document, and member in this workspace will be permanently deleted."}
-                        </p>
-                        <p>
-                            Type <strong>{hardDeleteTarget.name}</strong> to confirm:
-                        </p>
-                        <input
-                            type="text"
-                            value={hardDeleteConfirmText}
-                            onChange={(e) => setHardDeleteConfirmText(e.target.value)}
-                            style={{ width: "100%", marginBottom: "0.75rem" }}
-                            autoFocus
-                        />
-                        {hardDeleteError && <p className="error-text">{hardDeleteError}</p>}
-                        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
-                            <button onClick={cancelHardDelete} disabled={hardDeletePending}>Cancel</button>
-                            <button
-                                className="btn-danger"
-                                disabled={hardDeleteConfirmText !== hardDeleteTarget.name || hardDeletePending}
-                                onClick={confirmHardDelete}
-                            >
-                                {hardDeletePending ? "Deleting…" : "Delete Permanently"}
+                {workspaceRole === "owner" && (
+                    <div className="invite-block">
+                        <div className="invite-block-label">Invite someone</div>
+                        <form onSubmit={handleInvite} className="create-box">
+                            <input
+                                type="email"
+                                placeholder="Invite by email"
+                                value={inviteEmail}
+                                onChange={(e) => setInviteEmail(e.target.value)}
+                                required
+                            />
+                            <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as "editor" | "viewer")}>
+                                <option value="editor">Editor</option>
+                                <option value="viewer">Viewer</option>
+                            </select>
+                            <button type="submit" className="btn-primary" disabled={inviting}>
+                                {inviting ? "Inviting…" : "Invite"}
                             </button>
+                        </form>
+                    </div>
+                )}
+                {inviteError && <p className="error-text" style={{ marginTop: "0.4rem" }}>{inviteError}</p>}
+                {inviteSuccess && <p className="muted" style={{ marginTop: "0.4rem" }}>{inviteSuccess}</p>}
+                <p className="section-label">Contents</p>
+                {folders.length === 0 && documents.length === 0 ? (
+                    <div className="callout">
+                        <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "15px" }}>Nothing here yet</p>
+                        <p className="muted" style={{ margin: 0 }}>
+                            Create a folder to organize documents, or jump straight into a new document below.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="content-grid">
+                        {folders.map((f) => (
+                            <div key={f.id} className="content-card">
+                                <div className="content-card-kebab-wrap">{renderActions("folder", f.id, f.name)}</div>
+                                <div className="content-card-icon"><FolderIcon /></div>
+                                <div className="content-card-title">
+                                    {renderNameOrInput("folder", f.id, f.name, `/workspaces/${workspaceId}?folderId=${f.id}`)}
+                                </div>
+                                {renderMovePicker("folder", f.id)}
+                            </div>
+                        ))}
+                        {documents.map((d) => (
+                            <div key={d.id} className="content-card">
+                                <div className="content-card-kebab-wrap">{renderActions("document", d.id, d.title)}</div>
+                                <div className="content-card-icon"><DocIcon /></div>
+                                <div className="content-card-title">
+                                    {renderNameOrInput("document", d.id, d.title, `/workspaces/${workspaceId}/documents/${d.id}`)}
+                                    {d.isPinned && <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>pinned</span>}
+                                </div>
+                                {renderMovePicker("document", d.id)}
+                            </div>
+                        ))}
+
+                        <div style={{ position: "relative" }} ref={addMenuRef}>
+                            <button type="button" className="add-tile" onClick={() => setAddMenuOpen((v) => !v)}>
+                                + New
+                            </button>
+                            {addMenuOpen && (
+                                <div className="add-menu">
+                                    <button type="button" onClick={() => { setCreatingType("folder"); setAddMenuOpen(false); }}>New folder</button>
+                                    <button type="button" onClick={() => { setCreatingType("document"); setAddMenuOpen(false); }}>New document</button>
+                                </div>
+                            )}
                         </div>
                     </div>
-                </div>
-            )}
+                    
+                )}
+
+                {workspaceRole === "owner" && (
+                    <>
+                        <button onClick={toggleArchivedView} className="back-link" style={{ marginTop: "0.75rem", marginBottom: "0.5rem", display: "inline-block" }}>
+                            {showArchived ? "Hide archived items" : "View archived items"}
+                        </button>
+
+                        {showArchived && (
+                            <div className="callout archive-panel" style={{ marginBottom: "1rem" }}>
+                                <p className="section-label" style={{ marginTop: 0 }}>Archived</p>
+                                {archivedError && <p className="error-text">{archivedError}</p>}
+                                {archivedLoading ? (
+                                    <p className="muted">Loading archived items…</p>
+                                ) : archivedFolders.length === 0 && archivedDocuments.length === 0 ? (
+                                    <p className="muted">Nothing archived.</p>
+                                ) : (
+                                    <>{renderArchiveNode("root", buildArchiveChildren(archivedFolders, archivedDocuments), 0)}</>
+                                )}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {creatingType === "folder" && (
+                    <form onSubmit={handleCreateFolder} className="create-box" style={{ marginTop: "0.75rem" }}>
+                        <input
+                            type="text"
+                            placeholder="New folder name"
+                            value={newFolderName}
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            autoFocus
+                            required
+                        />
+                        <button type="submit" className="btn-primary" disabled={creatingFolder}>
+                            {creatingFolder ? "Creating…" : "Create folder"}
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => setCreatingType(null)}>Cancel</button>
+                    </form>
+                )}
+
+                {creatingType === "document" && (
+                    <form onSubmit={handleCreateDocument} className="create-box" style={{ marginTop: "0.75rem" }}>
+                        <input
+                            type="text"
+                            placeholder="New document title"
+                            value={newDocTitle}
+                            onChange={(e) => setNewDocTitle(e.target.value)}
+                            autoFocus
+                            required
+                        />
+                        <button type="submit" className="btn-primary" disabled={creatingDoc}>
+                            {creatingDoc ? "Creating…" : "Create document"}
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={() => setCreatingType(null)}>Cancel</button>
+                    </form>
+                )}
+                <p className="section-label">Documents</p>
+                {documents.length === 0 ? (
+                    <div className="callout">
+                        <p style={{ margin: "0 0 0.25rem", fontFamily: "var(--font-display)", fontSize: "15px" }}>No documents here yet</p>
+                        <p className="muted" style={{ margin: 0 }}>This is where your notes live — create your first document below.</p>
+                    </div>
+                ) : (
+                    <div>
+                        {documents.map((d) => (
+                            <div key={d.id} className="row item-row">
+                                <span className="item-row-name">
+                                    {renderNameOrInput("document", d.id, d.title, `/workspaces/${workspaceId}/documents/${d.id}`)}
+                                    {d.isPinned && <span className="muted" style={{ fontSize: "11px" }}>pinned</span>}
+                                </span>
+                                <span className="item-row-actions">
+                                    {renderMovePicker("document", d.id)}
+                                    {renderActions("document", d.id, d.title)}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <form onSubmit={handleCreateDocument} className="create-box" style={{ marginTop: "0.75rem" }}>
+                    <input
+                        type="text"
+                        placeholder="New document title"
+                        value={newDocTitle}
+                        onChange={(e) => setNewDocTitle(e.target.value)}
+                        required
+                    />
+                    <button type="submit" className="btn-primary" disabled={creatingDoc}>
+                        {creatingDoc ? "Creating…" : "Create document"}
+                    </button>
+                </form>
+
+                {workspaceRole === "owner" && (
+                    <div className="danger-zone">
+                        <p className="section-label" style={{ color: "var(--danger)", marginTop: 0 }}>Danger Zone</p>
+                        <p className="muted" style={{ fontSize: "13px" }}>
+                            Permanently delete this entire workspace, including all folders, documents, and members. This cannot be undone.
+                        </p>
+                        <button className="btn-danger" onClick={() => openHardDeleteConfirm("workspace", workspaceId, workspaceName)}>
+                            Delete Workspace Permanently
+                        </button>
+                    </div>
+                )}
+
+                {hardDeleteTarget && (
+                    <div className="modal-overlay">
+                        <div className="modal-dialog">
+                            <h3 style={{ marginTop: 0 }}>Permanently delete {hardDeleteTarget.type}?</h3>
+                            <p className="muted">
+                                This cannot be undone.
+                                {hardDeleteTarget.type === "folder" && " All documents and subfolders inside will also be permanently deleted."}
+                                {hardDeleteTarget.type === "workspace" && " Every folder, document, and member in this workspace will be permanently deleted."}
+                            </p>
+                            <p>Type <strong>{hardDeleteTarget.name}</strong> to confirm:</p>
+                            <input
+                                type="text"
+                                value={hardDeleteConfirmText}
+                                onChange={(e) => setHardDeleteConfirmText(e.target.value)}
+                                style={{ width: "100%", marginBottom: "0.75rem" }}
+                                autoFocus
+                            />
+                            {hardDeleteError && <p className="error-text">{hardDeleteError}</p>}
+                            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                                <button onClick={cancelHardDelete} disabled={hardDeletePending}>Cancel</button>
+                                <button
+                                    className="btn-danger"
+                                    disabled={hardDeleteConfirmText !== hardDeleteTarget.name || hardDeletePending}
+                                    onClick={confirmHardDelete}
+                                >
+                                    {hardDeletePending ? "Deleting…" : "Delete Permanently"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
+
+
     );
 }
 
